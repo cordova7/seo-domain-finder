@@ -32,7 +32,7 @@ public static class DependencyInjection
         services.AddHttpClient("OpenRouter", c =>
         {
             c.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
-            c.Timeout = TimeSpan.FromSeconds(60);
+            c.Timeout = TimeSpan.FromSeconds(120);
             c.DefaultRequestHeaders.Add("HTTP-Referer", "https://github.com/seo-domain-finder");
             c.DefaultRequestHeaders.Add("X-Title", "SEO Domain Finder");
         });

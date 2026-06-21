@@ -124,6 +124,35 @@ public class HeuristicNameGeneratorTests
 public class DomainSearchServiceTests
 {
     [Fact]
+    public async Task Search_WithPlanner_SkipsLlmNameGenAndUsesPlannerQueue()
+    {
+        var checker = new FakeChecker(availableAfter: 1);
+        var planner = new FakePlanner(
+        [
+            new PlannedCheck("pawlynx", "com", 90),
+            new PlannedCheck("walklio", "io", 85)
+        ]);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "dog walking business",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 10
+        });
+
+        Assert.Equal("heuristic+planner", result.GeneratorUsed);
+        Assert.Contains(result.Candidates, c => c.FullDomain is "pawlynx.com" or "walklio.io");
+    }
+
+    [Fact]
     public async Task Search_ReturnsOnlyAvailableDomains()
     {
         var checker = new FakeChecker(availableAfter: 3);
@@ -262,6 +291,12 @@ public class DomainSearchServiceTests
 
         Assert.Equal("com", queue[0].Tld);
         Assert.Equal("com", queue[1].Tld);
+    }
+
+    private sealed class FakePlanner(IReadOnlyList<PlannedCheck> checks) : ICheckPlanner
+    {
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default) =>
+            Task.FromResult(checks);
     }
 
     private sealed class FakeChecker(

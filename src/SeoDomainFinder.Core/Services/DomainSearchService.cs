@@ -220,7 +220,10 @@ public sealed class DomainSearchService : IDomainSearchService
         return result;
     }
 
-    private sealed record NameGenResult(IReadOnlyList<string> Names, string GeneratorUsed, string? Warning);
+    private sealed record NameGenResult(
+        IReadOnlyList<string> Names,
+        string GeneratorUsed,
+        string? Warning);
 
     private sealed record QueueBuildResult(
         List<DomainCandidate> Queue,
@@ -241,11 +244,17 @@ public sealed class DomainSearchService : IDomainSearchService
         var heuristicNames = await GetHeuristic().GenerateAsync(genRequest, ct);
         var merged = new HashSet<string>(heuristicNames, StringComparer.OrdinalIgnoreCase);
         string? warning = null;
-        var generatorUsed = "hybrid";
+        var generatorUsed = "heuristic";
+
+        // Planner invents check targets; skip slow redundant OpenRouter name gen (avoids 60s timeout).
+        var skipLlmNameGen = _checkPlanner is not null;
+        if (skipLlmNameGen)
+            return new NameGenResult(merged.ToList(), generatorUsed, null);
 
         var llm = _generators.FirstOrDefault(g => g.Name == "openrouter");
         if (llm is not null)
         {
+            generatorUsed = "hybrid";
             try
             {
                 foreach (var name in await llm.GenerateAsync(genRequest, ct))
@@ -290,10 +299,15 @@ public sealed class DomainSearchService : IDomainSearchService
 
                 if (planned.Count > 0)
                 {
-                    var used = generatorUsed == "hybrid" ? "hybrid+planner" : "planner";
+                    var used = generatorUsed is "hybrid" or "heuristic"
+                        ? $"{generatorUsed}+planner"
+                        : "planner";
                     return new QueueBuildResult(
                         PlannedToCandidates(planned, keywords, lang), used, warning);
                 }
+
+                warning = AppendWarning(warning,
+                    "AI planner returned no valid domains; using heuristic queue.");
             }
             catch (Exception ex)
             {

@@ -82,6 +82,21 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         int maxChecks)
     {
         text = StripMarkdown(text);
+
+        if (text.StartsWith('['))
+        {
+            try
+            {
+                var arr = JsonSerializer.Deserialize<List<PlannerCheck>>(text, JsonOptions);
+                if (arr is { Count: > 0 })
+                    return FilterChecks(arr, allowedTlds, maxChecks);
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+
         PlannerResponse? parsed;
         try
         {
@@ -95,19 +110,34 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         if (parsed?.Checks is null || parsed.Checks.Count == 0)
             return [];
 
+        return FilterChecks(parsed.Checks, allowedTlds, maxChecks);
+    }
+
+    private static List<PlannedCheck> FilterChecks(
+        List<PlannerCheck> items,
+        IReadOnlyList<string> allowedTlds,
+        int maxChecks)
+    {
         var allowed = new HashSet<string>(
             allowedTlds.Select(t => t.Trim().TrimStart('.').ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<PlannedCheck>();
 
-        foreach (var item in parsed.Checks)
+        foreach (var item in items)
         {
             if (result.Count >= maxChecks)
                 break;
 
-            var label = NameSanitizer.Normalize(item.Label ?? "");
+            var label = NameSanitizer.Normalize(item.Label ?? item.Domain ?? "");
             var tld = (item.Tld ?? "").Trim().TrimStart('.').ToLowerInvariant();
+            if (string.IsNullOrEmpty(tld) && label.Contains('.'))
+            {
+                var parts = label.Split('.', 2);
+                label = NameSanitizer.Normalize(parts[0]);
+                tld = parts[1].ToLowerInvariant();
+            }
+
             if (!NameSanitizer.IsValidDomainName(label) || !allowed.Contains(tld))
                 continue;
 
@@ -172,6 +202,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
     private sealed class PlannerCheck
     {
         public string? Label { get; set; }
+        public string? Domain { get; set; }
         public string? Tld { get; set; }
         public int Score { get; set; }
     }
