@@ -104,25 +104,27 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         else if (isRefill)
         {
             systemPrompt = """
-                You replan domain availability checks after many names were taken.
-                Respond with a single JSON object: { "checks": [ { "label": "pawlynx", "tld": "com", "score": 88 } ] }
+                Previous names were taken. Generate NEW coined domains only.
+                Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 88 } ] }
                 No explanation, no markdown, no text before or after the JSON.
-                Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
-                Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
-                Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible). Pick TLDs most likely free under the price cap.
+                Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
+                Opaque portmanteaus only — never copy taken names or their patterns.
+                NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
+                If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
+                Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
                 """;
         }
         else
         {
             systemPrompt = """
                 You plan which domains to availability-check for a business.
-                Respond with a single JSON object: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
+                Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 92 }, { "label": "brawlr", "tld": "com", "score": 90 } ] }
                 No explanation, no markdown, no text before or after the JSON.
-                Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
-                Assume most obvious .com dictionary and fight/shop/app-style names are already registered.
-                At least half the labels should be opaque 6-8 char coinages without literal fight/battle/clash/punch morphemes.
-                Prefer coined/blended names over obvious keyword combos. Spread across allowed TLDs per the brief.
-                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 15 if possible).
+                Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
+                Coined pronounceable brands only — not dictionary words with startup suffixes.
+                NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
+                If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
+                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 12 if possible).
                 """;
         }
 
@@ -151,6 +153,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             NEVER use these patterns: {string.Join(", ", brief.AvoidPatterns)}
             TLD strategy: {brief.TldStrategy}
             Allowed TLDs: {tlds}
+            {(request.Tlds.Count > 1 ? "Distribute checks evenly across allowed TLDs — do not put more than half on .com." : "")}
             Max price USD: {request.MaxPriceUsd:F0}
             Check budget: {checkBudget}
             Taken/unavailable so far: {taken}

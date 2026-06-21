@@ -461,8 +461,38 @@ public class DomainSearchServiceTests
             MaxChecks = 25
         });
 
-        Assert.Equal("brief+planner", result.GeneratorUsed);
+        Assert.StartsWith("brief+planner", result.GeneratorUsed);
         Assert.Contains(result.Candidates, c => c.FullDomain == "brawlr.io");
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_TriggersRecoveryWhenFewFound()
+    {
+        var checker = new FirstAvailableChecker();
+        var planner = new RecoveryFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        var events = new List<SearchProgressEvent>();
+        await service.SearchAsync(
+            new DomainSearchRequest
+            {
+                Prompt = "tinder but for hood street fighters",
+                Language = "en",
+                Tlds = ["com", "io"],
+                UseLlm = true,
+                MaxCandidates = 5,
+                MaxChecks = 25
+            },
+            new Progress<SearchProgressEvent>(events.Add));
+
+        Assert.Equal(2, planner.CallCount);
+        Assert.Contains(events, e => e.Phase == "refining");
+        Assert.True(events.Count(e => e.Phase == "refining") >= 1);
     }
 
     [Fact]
@@ -487,7 +517,7 @@ public class DomainSearchServiceTests
             MaxChecks = 25
         });
 
-        Assert.Equal(1, planner.CallCount);
+        Assert.True(planner.CallCount >= 1);
         Assert.DoesNotContain(planner.Requests, r => r.IsTopUp);
     }
 
@@ -541,6 +571,30 @@ public class DomainSearchServiceTests
         {
             LastRequest = request;
             return Task.FromResult(checks);
+        }
+    }
+
+    private sealed class RecoveryFakePlanner : ICheckPlanner
+    {
+        private int _calls;
+        public int CallCount => _calls;
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            _calls++;
+            if (_calls == 1)
+            {
+                return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                    Enumerable.Range(0, 17)
+                        .Select(i => new PlannedCheck($"brawlx{(char)('a' + i)}", i % 2 == 0 ? "com" : "io", 80))
+                        .ToList());
+            }
+
+            var remaining = request.RemainingChecks ?? 8;
+            return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                Enumerable.Range(0, remaining)
+                    .Select(i => new PlannedCheck($"recvry{(char)('a' + i)}", "io", 75))
+                    .ToList());
         }
     }
 
