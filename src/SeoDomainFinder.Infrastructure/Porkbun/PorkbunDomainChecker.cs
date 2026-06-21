@@ -4,12 +4,15 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Infrastructure.Options;
 
 namespace SeoDomainFinder.Infrastructure.Porkbun;
 
 public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
 {
+    private const int MaxRateLimitRetries = 3;
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<PorkbunOptions> _options;
     private readonly ILogger<PorkbunDomainChecker> _logger;
@@ -43,9 +46,53 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
         var (apiKey, secret) = ResolveCredentials();
         if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(secret))
         {
-            return new DomainCheckResult(fullDomain, false, null, null, "Porkbun API credentials not configured");
+            return new DomainCheckResult(
+                fullDomain, false, null, null, DomainCheckReasons.CredentialsMissing);
         }
 
+        DomainCheckResult? lastRateLimited = null;
+        for (var attempt = 0; attempt <= MaxRateLimitRetries; attempt++)
+        {
+            var result = await CheckOnceAsync(fullDomain, apiKey, secret, ct);
+            if (!IsRateLimited(result))
+                return result;
+
+            lastRateLimited = result;
+            if (attempt == MaxRateLimitRetries)
+                break;
+
+            var waitMs = ParseRetryDelayMs(result.Reason);
+            _logger.LogInformation(
+                "Porkbun rate limit for {Domain}, waiting {WaitMs}ms (attempt {Attempt})",
+                fullDomain, waitMs, attempt + 1);
+            await Task.Delay(waitMs, ct);
+        }
+
+        return lastRateLimited ?? new DomainCheckResult(
+            fullDomain, false, null, null, DomainCheckReasons.RateLimited);
+    }
+
+    public static bool IsRateLimited(DomainCheckResult result) =>
+        string.Equals(result.Reason, DomainCheckReasons.RateLimited, StringComparison.OrdinalIgnoreCase) ||
+        (result.Reason?.Contains("within 10 seconds", StringComparison.OrdinalIgnoreCase) ?? false) ||
+        (result.Reason?.Contains("RATE_LIMIT", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    public static int ParseRetryDelayMs(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return 10_000;
+
+        var match = System.Text.RegularExpressions.Regex.Match(reason, @"ttl:(\d+)", 
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var ttl) && ttl > 0)
+            return ttl * 1000;
+
+        return 10_000;
+    }
+
+    private async Task<DomainCheckResult> CheckOnceAsync(
+        string fullDomain, string apiKey, string secret, CancellationToken ct)
+    {
         await ThrottleAsync(ct);
 
         var client = _httpClientFactory.CreateClient("Porkbun");
@@ -64,14 +111,32 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
 
             if (!string.Equals(result.Status, "SUCCESS", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Porkbun check failed for {Domain}: {Message}", fullDomain, result.Message);
-                return new DomainCheckResult(fullDomain, false, null, null, result.Message);
+                var message = result.Message;
+                if (string.IsNullOrWhiteSpace(message))
+                    message = $"HTTP {(int)response.StatusCode}";
+
+                if (IsRateLimitMessage(message))
+                {
+                    var ttl = result.TtlRemaining ?? 10;
+                    return new DomainCheckResult(
+                        fullDomain, false, null, null, $"rate_limited|ttl:{ttl}|{message}");
+                }
+
+                _logger.LogWarning("Porkbun check failed for {Domain}: {Message}", fullDomain, message);
+                return new DomainCheckResult(fullDomain, false, null, null, message);
             }
 
-            var available = string.Equals(result.Avail, "yes", StringComparison.OrdinalIgnoreCase);
-            decimal? price = decimal.TryParse(result.Price, out var p) ? p : null;
-            return new DomainCheckResult(fullDomain, available, price, result.Type,
-                available ? null : "unavailable");
+            var avail = result.Response?.Avail ?? result.Avail;
+            var priceStr = result.Response?.Price ?? result.Price;
+            var type = result.Response?.Type ?? result.Type;
+            var available = string.Equals(avail, "yes", StringComparison.OrdinalIgnoreCase);
+            decimal? price = decimal.TryParse(priceStr, out var p) ? p : null;
+            return new DomainCheckResult(
+                fullDomain,
+                available,
+                price,
+                type,
+                available ? null : DomainCheckReasons.Unavailable);
         }
         catch (Exception ex)
         {
@@ -79,6 +144,10 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
             return new DomainCheckResult(fullDomain, false, null, null, ex.Message);
         }
     }
+
+    private static bool IsRateLimitMessage(string message) =>
+        message.Contains("within 10 seconds", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("RATE_LIMIT", StringComparison.OrdinalIgnoreCase);
 
     private (string? ApiKey, string? Secret) ResolveCredentials()
     {

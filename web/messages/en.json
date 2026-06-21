@@ -37,6 +37,11 @@
   "warning": "Note",
   "error": "Error",
   "noResults": "No results. Try a different description.",
+  "progressGenerating": "Generating SEO names...",
+  "progressChecking": "Checking",
+  "progressFound": "Found",
+  "progressRemaining": "Est. remaining",
+  "progressComplete": "Search complete",
   "footer": "MIT open source",
   "seoExplanation": "SEO signals"
 }

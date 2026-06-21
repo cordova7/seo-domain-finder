@@ -37,6 +37,11 @@
   "warning": "Aviso",
   "error": "Erro",
   "noResults": "Sem resultados. Tente outra descrição.",
+  "progressGenerating": "Gerando nomes SEO...",
+  "progressChecking": "Verificando",
+  "progressFound": "Encontrados",
+  "progressRemaining": "Tempo est.",
+  "progressComplete": "Busca concluída",
   "footer": "Código aberto MIT",
   "seoExplanation": "Sinais SEO"
 }

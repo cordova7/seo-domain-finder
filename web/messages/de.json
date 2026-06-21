@@ -37,6 +37,11 @@
   "warning": "Hinweis",
   "error": "Fehler",
   "noResults": "Keine Ergebnisse. Andere Beschreibung versuchen.",
+  "progressGenerating": "SEO-Namen werden generiert...",
+  "progressChecking": "Prüfe",
+  "progressFound": "Gefunden",
+  "progressRemaining": "Geschätzt",
+  "progressComplete": "Suche abgeschlossen",
   "footer": "MIT Open Source",
   "seoExplanation": "SEO-Signale"
 }

@@ -190,17 +190,73 @@ public class DomainSearchServiceTests
         Assert.Contains("not configured", result.Warning!, StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed class FakeChecker(int availableAfter = int.MaxValue, bool credentialsMissing = false)
-        : IDomainAvailabilityChecker
+    [Fact]
+    public async Task Search_DoesNotCountRateLimitedChecks()
+    {
+        var checker = new FakeChecker(rateLimited: true);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "pet shop for dogs",
+            Language = "en",
+            Tlds = ["com"],
+            MaxCandidates = 5,
+            MaxChecks = 5
+        });
+
+        Assert.Empty(result.Candidates);
+        Assert.Contains("rate limit", result.Warning!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Search_ReportsProgressEvents()
+    {
+        var checker = new FakeChecker(availableAfter: 1);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker);
+        var events = new List<SearchProgressEvent>();
+
+        await service.SearchAsync(
+            new DomainSearchRequest
+            {
+                Prompt = "pet shop for dogs",
+                Language = "en",
+                Tlds = ["com"],
+                MaxCandidates = 3,
+                MaxChecks = 10
+            },
+            new Progress<SearchProgressEvent>(events.Add));
+
+        Assert.Contains(events, e => e.Phase == "generating");
+        Assert.Contains(events, e => e.Phase == "checking");
+        Assert.Contains(events, e => e.Phase == "done");
+    }
+
+    private sealed class FakeChecker(
+        int availableAfter = int.MaxValue,
+        bool credentialsMissing = false,
+        bool rateLimited = false) : IDomainAvailabilityChecker
     {
         private int _calls;
 
         public Task<DomainCheckResult> CheckAsync(string fullDomain, CancellationToken ct = default)
         {
+            if (rateLimited)
+            {
+                return Task.FromResult(new DomainCheckResult(
+                    fullDomain, false, null, null, DomainCheckReasons.RateLimited));
+            }
+
             if (credentialsMissing)
             {
                 return Task.FromResult(new DomainCheckResult(
-                    fullDomain, false, null, null, "Porkbun API credentials not configured"));
+                    fullDomain, false, null, null, DomainCheckReasons.CredentialsMissing));
             }
 
             _calls++;
@@ -210,7 +266,7 @@ public class DomainSearchServiceTests
                 available,
                 available ? 12.99m : null,
                 available ? "standard" : null,
-                available ? null : "taken"));
+                available ? null : DomainCheckReasons.Unavailable));
         }
     }
 }

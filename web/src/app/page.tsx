@@ -4,9 +4,11 @@ import { useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { CountryTldPicker } from "@/components/CountryTldPicker";
-import { searchDomains, type DomainCandidate } from "@/lib/api";
+import { SearchProgress } from "@/components/SearchProgress";
+import { searchDomainsStream, type DomainCandidate } from "@/lib/api";
+import type { SearchProgressEvent } from "@/lib/search-progress";
 
-const DEFAULT_UNIVERSAL = ["com", "io", "net", "app"];
+const DEFAULT_UNIVERSAL = ["com", "io"];
 
 export default function HomePage() {
   const { t, locale } = useI18n();
@@ -16,6 +18,7 @@ export default function HomePage() {
   const [maxPrice, setMaxPrice] = useState(15);
   const [useAi, setUseAi] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<SearchProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<DomainCandidate[]>([]);
   const [meta, setMeta] = useState<{
@@ -30,14 +33,25 @@ export default function HomePage() {
     if (!prompt.trim()) return;
     setLoading(true);
     setError(null);
+    setProgress({
+      phase: "generating",
+      checksUsed: 0,
+      maxChecks: 25,
+      foundCount: 0,
+      currentDomain: null,
+      etaSeconds: null,
+    });
     try {
-      const res = await searchDomains({
-        prompt: prompt.trim(),
-        language: locale,
-        tlds: allTlds.length ? allTlds : ["com"],
-        maxPriceUsd: maxPrice,
-        useLlm: useAi,
-      });
+      const res = await searchDomainsStream(
+        {
+          prompt: prompt.trim(),
+          language: locale,
+          tlds: allTlds.length ? allTlds : ["com"],
+          maxPriceUsd: maxPrice,
+          useLlm: useAi,
+        },
+        setProgress
+      );
       setResults(res.candidates);
       setMeta({
         keywords: res.extractedKeywords,
@@ -48,6 +62,7 @@ export default function HomePage() {
       setError(e instanceof Error ? e.message : t.error);
       setResults([]);
       setMeta(null);
+      setProgress(null);
     } finally {
       setLoading(false);
     }
@@ -72,7 +87,8 @@ export default function HomePage() {
             placeholder={t.promptPlaceholder}
             rows={4}
             maxLength={500}
-            className="mt-2 w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-zinc-600 dark:bg-zinc-800"
+            disabled={loading}
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800"
           />
 
           <div className="mt-4">
@@ -98,7 +114,8 @@ export default function HomePage() {
               step={1}
               value={maxPrice}
               onChange={(e) => setMaxPrice(Number(e.target.value))}
-              className="mt-2 w-full"
+              disabled={loading}
+              className="mt-2 w-full disabled:opacity-60"
             />
           </div>
 
@@ -107,6 +124,7 @@ export default function HomePage() {
               type="checkbox"
               checked={useAi}
               onChange={(e) => setUseAi(e.target.checked)}
+              disabled={loading}
               className="rounded"
             />
             {t.useAiLabel}
@@ -121,6 +139,19 @@ export default function HomePage() {
             {loading ? t.searching : t.searchButton}
           </button>
         </section>
+
+        {loading && progress && (
+          <SearchProgress
+            progress={progress}
+            labels={{
+              generating: t.progressGenerating,
+              checking: t.progressChecking,
+              found: t.progressFound,
+              remaining: t.progressRemaining,
+              complete: t.progressComplete,
+            }}
+          />
+        )}
 
         {error && (
           <p className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">

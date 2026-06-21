@@ -5,7 +5,7 @@ public sealed class PorkbunOptions
     public const string SectionName = "Porkbun";
     public string? ApiKey { get; set; }
     public string? SecretKey { get; set; }
-    public int MinDelayMs { get; set; } = 2000;
+    public int MinDelayMs { get; set; } = 10000;
 }
 
 public sealed class OpenRouterOptions
@@ -19,7 +19,7 @@ public sealed class DemoRateLimitOptions
 {
     public const string SectionName = "DemoRateLimit";
     public int LlmPerHour { get; set; } = 5;
-    public int ChecksPerSession { get; set; } = 30;
+    public int ChecksPerSession { get; set; } = 25;
 }
 
 public sealed class CorsOptions
