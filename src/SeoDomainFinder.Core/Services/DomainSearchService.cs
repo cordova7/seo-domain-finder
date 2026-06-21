@@ -6,6 +6,8 @@ namespace SeoDomainFinder.Core.Services;
 
 public sealed class DomainSearchService : IDomainSearchService
 {
+    private const string CredentialsMissingReason = "Porkbun API credentials not configured";
+
     private readonly IEnumerable<INameGenerator> _generators;
     private readonly ISeoScorer _seoScorer;
     private readonly IDomainAvailabilityChecker _availabilityChecker;
@@ -81,6 +83,7 @@ public sealed class DomainSearchService : IDomainSearchService
         var queue = BuildCandidateQueue(rawNames, keywords, lang, tlds);
         var available = new List<DomainCandidate>();
         var checksUsed = 0;
+        var credentialFailures = 0;
         var maxChecks = Math.Max(10, request.MaxChecks);
         var target = request.MaxCandidates;
 
@@ -93,6 +96,9 @@ public sealed class DomainSearchService : IDomainSearchService
             checksUsed++;
 
             var check = await _availabilityChecker.CheckAsync(candidate.FullDomain, ct);
+            if (string.Equals(check.Reason, CredentialsMissingReason, StringComparison.OrdinalIgnoreCase))
+                credentialFailures++;
+
             var priceOk = check.PriceUsd is null || check.PriceUsd <= request.MaxPriceUsd;
             var typeOk = check.PriceType is null or "standard" or "registration";
 
@@ -108,8 +114,16 @@ public sealed class DomainSearchService : IDomainSearchService
 
         if (available.Count == 0)
         {
-            warning = (warning ?? "") +
-                      $" Checked {checksUsed} domains; none available under ${request.MaxPriceUsd:F0}. Try a more specific description, fewer TLDs, or enable AI.";
+            if (checksUsed > 0 && credentialFailures == checksUsed)
+            {
+                warning = "Domain availability checks are unavailable (Porkbun API not configured on server).";
+            }
+            else
+            {
+                warning = (warning ?? "") +
+                          $" Checked {checksUsed} domains; none available under ${request.MaxPriceUsd:F0}. " +
+                          "Try shorter names, add a country TLD (e.g. .mx), raise the price limit, or enable AI.";
+            }
         }
 
         var ranked = available

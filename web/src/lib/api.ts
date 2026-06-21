@@ -26,9 +26,6 @@ export type SearchRequest = {
   tlds: string[];
   maxPriceUsd: number;
   useLlm: boolean;
-  openRouterApiKey?: string;
-  porkbunApiKey?: string;
-  porkbunSecretKey?: string;
 };
 
 function getSessionId(): string {
@@ -54,9 +51,6 @@ export async function searchDomains(req: SearchRequest): Promise<SearchResponse>
       tlds: req.tlds,
       maxPriceUsd: req.maxPriceUsd,
       useLlm: req.useLlm,
-      openRouterApiKey: req.openRouterApiKey || undefined,
-      porkbunApiKey: req.porkbunApiKey || undefined,
-      porkbunSecretKey: req.porkbunSecretKey || undefined,
       maxCandidates: 15,
     }),
   });

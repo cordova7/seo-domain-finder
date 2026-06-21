@@ -2,7 +2,7 @@
   "title": "SEO Domain Finder",
   "subtitle": "Décrivez votre entreprise ou projet. Obtenez des noms de domaine optimisés SEO avec disponibilité et prix.",
   "promptLabel": "Description de l'activité",
-  "promptPlaceholder": "ex. Application d'alertes judiciaires pour avocats au Mexique...",
+  "promptPlaceholder": "ex. Marketplace de vêtements vintage pour jeunes à Paris",
   "tldsLabel": "TLD à vérifier",
   "tldsUniversal": "TLD populaires",
   "tldsCountry": "TLD pays (optionnel)",
@@ -37,6 +37,6 @@
   "warning": "Note",
   "error": "Erreur",
   "noResults": "Aucun résultat. Essayez une autre description.",
-  "footer": "Open source MIT · Disponibilité Porkbun · IA OpenRouter optionnelle",
+  "footer": "Open source MIT",
   "seoExplanation": "Signaux SEO"
 }

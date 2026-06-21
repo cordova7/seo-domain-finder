@@ -1,8 +1,8 @@
 {
   "title": "SEO Domain Finder",
-  "subtitle": "Describe your business or project. Get SEO-ranked domain names checked for availability and price.",
+  "subtitle": "Discover SEO-optimized domain names that are available to register at the lowest prices.",
   "promptLabel": "Business description",
-  "promptPlaceholder": "e.g. Judicial alert monitoring app for lawyers in Mexico...",
+  "promptPlaceholder": "e.g. Weekly meal prep delivery for busy professionals in Chicago",
   "tldsLabel": "TLDs to check",
   "tldsUniversal": "Popular TLDs",
   "tldsCountry": "Country TLDs (optional)",
@@ -37,6 +37,6 @@
   "warning": "Note",
   "error": "Error",
   "noResults": "No results. Try a different description.",
-  "footer": "MIT open source · Porkbun availability · Optional OpenRouter AI",
+  "footer": "MIT open source",
   "seoExplanation": "SEO signals"
 }

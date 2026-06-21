@@ -168,12 +168,41 @@ public class DomainSearchServiceTests
         Assert.Contains("none available", result.Warning!, StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed class FakeChecker(int availableAfter) : IDomainAvailabilityChecker
+    [Fact]
+    public async Task Search_WarnsWhenCredentialsMissing()
+    {
+        var checker = new FakeChecker(credentialsMissing: true);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "pet shop for dogs",
+            Language = "en",
+            Tlds = ["com"],
+            MaxCandidates = 5,
+            MaxChecks = 5
+        });
+
+        Assert.Empty(result.Candidates);
+        Assert.Contains("not configured", result.Warning!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class FakeChecker(int availableAfter = int.MaxValue, bool credentialsMissing = false)
+        : IDomainAvailabilityChecker
     {
         private int _calls;
 
         public Task<DomainCheckResult> CheckAsync(string fullDomain, CancellationToken ct = default)
         {
+            if (credentialsMissing)
+            {
+                return Task.FromResult(new DomainCheckResult(
+                    fullDomain, false, null, null, "Porkbun API credentials not configured"));
+            }
+
             _calls++;
             var available = _calls >= availableAfter;
             return Task.FromResult(new DomainCheckResult(

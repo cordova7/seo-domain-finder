@@ -15,10 +15,6 @@ export default function HomePage() {
   const [countryTlds, setCountryTlds] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState(15);
   const [useAi, setUseAi] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [porkbunKey, setPorkbunKey] = useState("");
-  const [porkbunSecret, setPorkbunSecret] = useState("");
-  const [openRouterKey, setOpenRouterKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<DomainCandidate[]>([]);
@@ -41,9 +37,6 @@ export default function HomePage() {
         tlds: allTlds.length ? allTlds : ["com"],
         maxPriceUsd: maxPrice,
         useLlm: useAi,
-        openRouterApiKey: openRouterKey || undefined,
-        porkbunApiKey: porkbunKey || undefined,
-        porkbunSecretKey: porkbunSecret || undefined,
       });
       setResults(res.candidates);
       setMeta({
@@ -121,40 +114,6 @@ export default function HomePage() {
 
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="mt-4 text-sm text-blue-600 hover:underline dark:text-blue-400"
-          >
-            {t.advanced}
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-3 grid gap-3 rounded-xl border border-dashed border-slate-300 p-4 dark:border-zinc-600">
-              <input
-                type="password"
-                placeholder={t.porkbunKey}
-                value={porkbunKey}
-                onChange={(e) => setPorkbunKey(e.target.value)}
-                className="rounded-lg border px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
-              />
-              <input
-                type="password"
-                placeholder={t.porkbunSecret}
-                value={porkbunSecret}
-                onChange={(e) => setPorkbunSecret(e.target.value)}
-                className="rounded-lg border px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
-              />
-              <input
-                type="password"
-                placeholder={t.openRouterKey}
-                value={openRouterKey}
-                onChange={(e) => setOpenRouterKey(e.target.value)}
-                className="rounded-lg border px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
-              />
-            </div>
-          )}
-
-          <button
-            type="button"
             onClick={handleSearch}
             disabled={loading || !prompt.trim()}
             className="mt-6 w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -173,7 +132,7 @@ export default function HomePage() {
           <div className="mt-6 text-sm text-slate-600 dark:text-zinc-400">
             <p>
               <span className="font-medium">{t.keywords}:</span>{" "}
-              {meta.keywords.join(", ") || "—"}
+              {meta.keywords.join(", ") || "-"}
             </p>
             <p>
               <span className="font-medium">{t.generator}:</span> {meta.generator}
@@ -214,7 +173,7 @@ export default function HomePage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {r.priceUsd != null ? `$${r.priceUsd.toFixed(2)}` : "—"}
+                        {r.priceUsd != null ? `$${r.priceUsd.toFixed(2)}` : "-"}
                       </td>
                     </tr>
                   ))}

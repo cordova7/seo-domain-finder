@@ -2,7 +2,7 @@
   "title": "SEO Domain Finder",
   "subtitle": "Beschreiben Sie Ihr Geschäft oder Projekt. Erhalten Sie SEO-optimierte Domains mit Verfügbarkeit und Preis.",
   "promptLabel": "Geschäftsbeschreibung",
-  "promptPlaceholder": "z.B. App für gerichtliche Benachrichtigungen für Anwälte in Mexiko...",
+  "promptPlaceholder": "z.B. Nachhaltige Meal-Prep-Lieferung für Berufstätige in Berlin",
   "tldsLabel": "Zu prüfende TLDs",
   "tldsUniversal": "Beliebte TLDs",
   "tldsCountry": "Länder-TLDs (optional)",
@@ -37,6 +37,6 @@
   "warning": "Hinweis",
   "error": "Fehler",
   "noResults": "Keine Ergebnisse. Andere Beschreibung versuchen.",
-  "footer": "MIT Open Source · Porkbun-Verfügbarkeit · Optionale OpenRouter-KI",
+  "footer": "MIT Open Source",
   "seoExplanation": "SEO-Signale"
 }

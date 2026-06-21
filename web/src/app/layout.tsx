@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "SEO Domain Finder",
   description:
-    "Generate SEO-optimized domain names with Porkbun availability and price checks. Multi-language, no API key required.",
+    "Discover SEO-optimized domain names that are available to register at the lowest prices.",
 };
 
 export default function RootLayout({
