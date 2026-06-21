@@ -40,14 +40,16 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         var systemPrompt = isRefill
             ? """
               You replan domain availability checks after many names were taken.
-              Return ONLY JSON: { "checks": [ { "label": "pawlynx", "tld": "com", "score": 88 } ] }
+              Respond with a single JSON object: { "checks": [ { "label": "pawlynx", "tld": "com", "score": 88 } ] }
+              No explanation, no markdown, no text before or after the JSON.
               Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
               Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
               At most N checks. Pick TLDs most likely free under the price cap.
               """
             : """
               You plan which domains to availability-check for a business.
-              Return ONLY JSON: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
+              Respond with a single JSON object: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
+              No explanation, no markdown, no text before or after the JSON.
               Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
               Prefer coined/blended names over obvious keyword combos (likely taken on .com).
               Usually pick .com for global/US businesses unless another TLD fits better.
@@ -81,13 +83,14 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         IReadOnlyList<string> allowedTlds,
         int maxChecks)
     {
-        text = StripMarkdown(text);
+        text = OpenRouterJsonHelper.StripMarkdown(text);
 
         if (text.StartsWith('['))
         {
+            var arrayJson = OpenRouterJsonHelper.ExtractJsonArray(text) ?? text;
             try
             {
-                var arr = JsonSerializer.Deserialize<List<PlannerCheck>>(text, JsonOptions);
+                var arr = JsonSerializer.Deserialize<List<PlannerCheck>>(arrayJson, JsonOptions);
                 if (arr is { Count: > 0 })
                     return FilterChecks(arr, allowedTlds, maxChecks);
             }
@@ -97,10 +100,12 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             }
         }
 
+        var objectJson = OpenRouterJsonHelper.ExtractJsonObject(text) ?? text;
+
         PlannerResponse? parsed;
         try
         {
-            parsed = JsonSerializer.Deserialize<PlannerResponse>(text, JsonOptions);
+            parsed = JsonSerializer.Deserialize<PlannerResponse>(objectJson, JsonOptions);
         }
         catch
         {
@@ -168,7 +173,8 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 new { role = "system", content = systemPrompt },
                 new { role = "user", content = userPrompt }
             },
-            temperature = 0.5
+            temperature = 0.2,
+            response_format = new { type = "json_object" }
         };
 
         using var response = await client.PostAsJsonAsync("chat/completions", payload, ct);
@@ -177,16 +183,6 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             ?? throw new InvalidOperationException("Empty OpenRouter response");
 
         return content.Choices?.FirstOrDefault()?.Message?.Content ?? "{}";
-    }
-
-    private static string StripMarkdown(string text)
-    {
-        text = text.Trim();
-        if (!text.StartsWith("```"))
-            return text;
-
-        var lines = text.Split('\n').Skip(1);
-        return string.Join('\n', lines).TrimEnd('`', '\n', ' ');
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

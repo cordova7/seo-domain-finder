@@ -9,6 +9,7 @@ public static partial class KeywordExtractor
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
     {
         "a", "an", "the", "and", "or", "for", "to", "of", "in", "on", "with", "my", "our", "your",
+        "like", "but", "just", "very", "also", "than", "then", "when", "where", "who", "how",
         "el", "la", "los", "las", "un", "una", "de", "del", "para", "con", "por", "en", "y", "o",
         "que", "es", "son", "mi", "tu", "su", "le", "les", "des", "du", "et", "pour", "avec", "sur",
         "das", "der", "die", "und", "mit", "für", "da", "do", "dos", "em", "no", "na", "com", "e", "um", "uma",

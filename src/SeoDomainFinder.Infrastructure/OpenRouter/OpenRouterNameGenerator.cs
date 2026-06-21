@@ -45,7 +45,7 @@ public sealed class OpenRouterNameGenerator : INameGenerator
             Prefer short coined brand blends (e.g. pawlynx, walklio) over obvious dictionary phrases likely taken on .com.
             Do not append country codes like mx, us, or uk to the label.
             Combine 1-2 core keywords from the business description for search intent.
-            Return ONLY a JSON array of strings, no markdown.
+            Respond with a JSON array of strings. No explanation, no markdown, no text before or after.
             """;
 
         var userPrompt = $"""
@@ -76,30 +76,64 @@ public sealed class OpenRouterNameGenerator : INameGenerator
             ?? throw new InvalidOperationException("Empty OpenRouter response");
 
         var text = content.Choices?.FirstOrDefault()?.Message?.Content ?? "[]";
-        text = text.Trim();
-        if (text.StartsWith("```"))
+        return ParseNames(text, request.MaxCandidates);
+    }
+
+    internal static List<string> ParseNames(string text, int maxCandidates)
+    {
+        text = OpenRouterJsonHelper.StripMarkdown(text);
+
+        var arrayJson = OpenRouterJsonHelper.ExtractJsonArray(text);
+        if (arrayJson is not null)
         {
-            var lines = text.Split('\n').Skip(1);
-            text = string.Join('\n', lines).TrimEnd('`', '\n', ' ');
+            try
+            {
+                var names = JsonSerializer.Deserialize<List<string>>(arrayJson);
+                if (names is { Count: > 0 })
+                    return NormalizeNames(names, maxCandidates);
+            }
+            catch
+            {
+                // fall through
+            }
         }
 
-        List<string>? names;
+        var objectJson = OpenRouterJsonHelper.ExtractJsonObject(text);
+        if (objectJson is not null)
+        {
+            try
+            {
+                var wrapped = JsonSerializer.Deserialize<OpenRouterNamesWrapper>(objectJson);
+                if (wrapped?.Names is { Count: > 0 })
+                    return NormalizeNames(wrapped.Names, maxCandidates);
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+
         try
         {
-            names = JsonSerializer.Deserialize<List<string>>(text);
+            var names = JsonSerializer.Deserialize<List<string>>(text);
+            if (names is { Count: > 0 })
+                return NormalizeNames(names, maxCandidates);
         }
         catch
         {
-            names = JsonSerializer.Deserialize<OpenRouterNamesWrapper>(text)?.Names;
+            // fall through
         }
 
-        return (names ?? [])
+        return [];
+    }
+
+    private static List<string> NormalizeNames(IReadOnlyList<string> names, int maxCandidates) =>
+        names
             .Select(NameSanitizer.Normalize)
             .Where(NameSanitizer.IsValidDomainName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(request.MaxCandidates * 2)
+            .Take(maxCandidates * 2)
             .ToList();
-    }
 
     private sealed class OpenRouterChatResponse
     {

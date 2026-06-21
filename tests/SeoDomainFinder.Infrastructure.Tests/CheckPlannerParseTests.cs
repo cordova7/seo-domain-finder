@@ -23,6 +23,41 @@ public class CheckPlannerParseTests
         Assert.Equal("dogdrift", checks[0].Label);
         Assert.Equal("com", checks[0].Tld);
     }
+
+    [Fact]
+    public void ParseChecks_GarbledPrefixFromFreeModel()
+    {
+        var text = """
+            O25LY JSO25: { "checks": [
+              { "label": "fightdate", "tld": "com", "score": 88 },
+              { "label": "fightmatch", "tld": "com", "score": 85 },
+              { "label": "fightlink", "tld": "net", "score": 55 }
+            ] }
+            """;
+
+        var checks = OpenRouterCheckPlanner.ParseChecks(text, ["com", "io"], 25);
+
+        Assert.Equal(2, checks.Count);
+        Assert.Equal("fightdate", checks[0].Label);
+        Assert.Equal("com", checks[0].Tld);
+        Assert.Equal("fightmatch", checks[1].Label);
+        Assert.DoesNotContain(checks, c => c.Tld == "net");
+    }
+}
+
+public class NameGeneratorParseTests
+{
+    [Fact]
+    public void ParseNames_GarbledPrefixBeforeArray()
+    {
+        var text = """Here are names: ["pawlynx", "walklio", "ab"]""";
+
+        var names = OpenRouterNameGenerator.ParseNames(text, 10);
+
+        Assert.Equal(2, names.Count);
+        Assert.Contains("pawlynx", names);
+        Assert.Contains("walklio", names);
+    }
 }
 
 public class PorkbunPremiumTests
