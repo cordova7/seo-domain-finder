@@ -8,7 +8,7 @@ import { SearchProgress } from "@/components/SearchProgress";
 import { searchDomainsStream, type DomainCandidate } from "@/lib/api";
 import type { SearchProgressEvent } from "@/lib/search-progress";
 
-const DEFAULT_UNIVERSAL = ["com", "io"];
+const DEFAULT_UNIVERSAL = ["com"];
 
 export default function HomePage() {
   const { t, locale } = useI18n();
@@ -16,7 +16,7 @@ export default function HomePage() {
   const [universalTlds, setUniversalTlds] = useState<string[]>(DEFAULT_UNIVERSAL);
   const [countryTlds, setCountryTlds] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState(15);
-  const [useAi, setUseAi] = useState(false);
+  const [useAi, setUseAi] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<SearchProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
