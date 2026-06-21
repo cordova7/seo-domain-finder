@@ -47,17 +47,19 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
                   "productSummary": "one sentence what the business is",
                   "audience": "who it serves",
                   "vibe": ["adjective1", "adjective2"],
-                  "namingStyles": ["coined 6-9 chars", "portmanteaus"],
+                  "namingStyles": ["soft metaphor portmanteaus", "8-11 char opaque blends"],
                   "conceptKeywords": ["thematic words to evoke, not concatenate"],
                   "avoidTerms": ["trademarks, competitor names, metaphor sources like tinder in tinder-but-for-X"],
-                  "avoidPatterns": ["keyword stacks", "-hub", "-app"],
-                  "tldStrategy": "when to use each allowed TLD"
+                  "avoidPatterns": ["keyword stacks", "-hub", "-app", "short trendy .com brands"],
+                  "tldStrategy": "when to use each allowed TLD; if only .com, note short pronounceable names are usually taken"
                 }
                 No explanation, no markdown, no text before or after the JSON.
-                If the prompt references another product as metaphor (e.g. "X but for Y"), put X in avoidTerms only.
-                Capture the interaction model (matching, discovery, swiping, booking) in productSummary and conceptKeywords — not the trademark.
+                If the prompt references another product as metaphor (e.g. "X but for Y") or a trademark (tiktok, tik-tok), put the brand in avoidTerms only.
+                Capture the interaction model (matching, discovery, swiping, booking, viral trends) in productSummary and conceptKeywords — not the trademark.
                 Do not genericize: preserve subculture, scene, tone, and niche vocabulary in vibe and conceptKeywords.
-                conceptKeywords must use words from the user's intent (e.g. hood, street, spar) — not sanitized startup jargon.
+                conceptKeywords must use words from the user's intent (e.g. hood, street, viral, store) — not sanitized startup jargon.
+                namingStyles should favor REGISTRABILITY: longer opaque blends over short trendy startup names.
+                For each namingStyle, assume squatters already own the obvious variants — planner must suggest unlikely-taken coinages.
                 Prefer invented brand names over literal keyword combinations.
                 Keep the JSON compact.
                 """;
@@ -114,10 +116,10 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
             parsed.ProductSummary.Trim(),
             string.IsNullOrWhiteSpace(parsed.Audience) ? "target customers" : parsed.Audience.Trim(),
             NormalizeList(parsed.Vibe, ["memorable"]),
-            NormalizeList(parsed.NamingStyles, ["coined 6-9 char brands"]),
+            NormalizeList(parsed.NamingStyles, ["soft metaphor portmanteaus", "8-11 char opaque blends"]),
             NormalizeList(parsed.ConceptKeywords, []),
             avoidTerms,
-            NormalizeList(parsed.AvoidPatterns, ["keyword stacks", "-hub", "-app"]),
+            NormalizeList(parsed.AvoidPatterns, ["keyword stacks", "-hub", "-app", "short trendy .com brands"]),
             string.IsNullOrWhiteSpace(parsed.TldStrategy)
                 ? "prefer .com for main brand"
                 : parsed.TldStrategy.Trim());

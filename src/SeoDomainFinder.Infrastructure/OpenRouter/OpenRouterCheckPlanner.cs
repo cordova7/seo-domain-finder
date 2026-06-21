@@ -15,6 +15,23 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
 {
     internal const string CheckCountPlaceholder = "{CHECK_COUNT}";
 
+    internal const string AvailabilitySelfCheck = """
+        AVAILABILITY RANKING (apply to every candidate — still return the full check budget):
+        1. NEVER use -ify, -ly, -ix, -hub, or dictionary+suffix patterns (bookify, shoply, linkify).
+        2. Short 6-7 char pronounceable .com names rank LOW — include at most 1-2 as longshots, not the whole batch.
+        3. Prefer names squatters would skip: 8-11 char soft metaphors (fadcrate, buzzstall) or opaque blends (sparqova).
+        4. Skip near-duplicates of taken/unavailable names already listed.
+        score = combined rank: availability guess (higher=likelier free) + brand quality. Sort checks best-first.
+        """;
+
+    internal const string TieredNamingGuide = """
+        Fill the batch with a MIX (not all one style):
+        - About 40% soft metaphor portmanteaus: two morphemes that evoke the concept (examples: fadcrate, buzzparcel, hoodspar, virstall) — 8-11 chars, pronounceable, NO -ify/-ly.
+        - About 60% opaque coined blends: 8-10 chars with uncommon letters (q, v, z, k), one soft concept hit.
+        BAD (almost always taken): bookify, linkly, viralstore, shopapp, 6-letter trendy .com.
+        GOOD (often free): fadcrate, sparqova, hoodlynx, buzznook, vircart.
+        """;
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<OpenRouterOptions> _options;
     private readonly ILogger<OpenRouterCheckPlanner> _logger;
@@ -107,26 +124,26 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 Batch 1 names were taken. Generate NEW coined domains that still evoke the same conceptKeywords for SEO.
                 Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 88 } ] }
                 No explanation, no markdown, no text before or after the JSON.
-                Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
+                Rules: lowercase labels, no hyphens/numbers, 8-10 chars preferred, one TLD per label.
                 Use opaque portmanteaus with one soft concept hit — not keyword stacks or taken labels.
-                Avoid roots and patterns listed in the taken hint. Do not reuse taken labels.
+                Avoid roots and patterns listed in the taken hint. Do not reuse taken labels or near-miss spellings.
                 NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
                 If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
                 Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
-                """;
+                """ + "\n" + TieredNamingGuide + "\n" + AvailabilitySelfCheck;
         }
         else
         {
             systemPrompt = """
                 You plan which domains to availability-check for a business.
-                Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 92 }, { "label": "brawlr", "tld": "com", "score": 90 } ] }
+                Respond with a single JSON object: { "checks": [ { "label": "fadcrate", "tld": "com", "score": 92 }, { "label": "sparqova", "tld": "io", "score": 88 } ] }
                 No explanation, no markdown, no text before or after the JSON.
-                Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
-                Coined or portmanteau brands that evoke ONE conceptKeyword from the brief — not dictionary+suffix spam.
+                Rules: lowercase labels, no hyphens/numbers, 8-11 chars preferred (7 min), one TLD per label.
+                Coined brands for SEO + registrability — evoke ONE conceptKeyword, never concatenate two full keywords.
                 NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
                 If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
-                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
-                """;
+                Rank by brand quality + likelihood of being free. Return exactly up to {CHECK_COUNT} checks.
+                """ + "\n" + TieredNamingGuide + "\n" + AvailabilitySelfCheck;
         }
 
         if ((isRefill || isTopUp) && !string.IsNullOrWhiteSpace(takenPatternHint))
@@ -154,10 +171,15 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             NEVER use these patterns: {string.Join(", ", brief.AvoidPatterns)}
             TLD strategy: {brief.TldStrategy}
             Allowed TLDs: {tlds}
-            {(request.Tlds.Count > 1 ? "Distribute checks evenly across allowed TLDs — do not put more than half on .com." : "")}
+            {(request.Tlds.Count == 1 && request.Tlds[0].Equals("com", StringComparison.OrdinalIgnoreCase)
+                ? "Only .com allowed — use soft metaphors (fadcrate, buzzstall) and 8-11 char coinages; avoid 6-letter trendy .com."
+                : request.Tlds.Count > 1
+                    ? "Distribute checks evenly across allowed TLDs — do not put more than half on .com."
+                    : "")}
             Max price USD: {request.MaxPriceUsd:F0}
             Check budget: {checkBudget}
             Taken/unavailable so far: {taken}
+            Use the tiered mix: soft metaphor portmanteaus + opaque blends. Never -ify/-ly suffix spam.
             """;
     }
 

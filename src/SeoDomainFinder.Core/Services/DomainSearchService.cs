@@ -279,22 +279,30 @@ public sealed class DomainSearchService : IDomainSearchService
             }
         }
 
-        if (available.Count == 0 &&
+        if (available.Count < target &&
             state.ChecksUsed < maxChecks &&
             maxChecks - state.ChecksUsed >= 1)
         {
-            var fallbackBudget = Math.Min(FallbackReserve, maxChecks - state.ChecksUsed);
-            var coined = SeoCoinedNameGenerator.Generate(brief, keywords, fallbackBudget * 2);
-            var fallbackQueue = BuildCoinedFallbackQueue(coined, tlds, keywords, lang, brief)
+            var remaining = maxChecks - state.ChecksUsed;
+            var supplementBudget = available.Count == 0
+                ? Math.Min(FallbackReserve, remaining)
+                : remaining;
+
+            var excludeLabels = CollectCheckedLabels(checkedDomains, unavailableSample);
+            var coined = SeoCoinedNameGenerator.Generate(
+                brief, keywords, supplementBudget * 3, excludeLabels);
+            var supplementQueue = BuildCoinedFallbackQueue(coined, tlds, keywords, lang, brief)
                 .Where(c => checkedDomains.Add(c.FullDomain))
-                .Take(fallbackBudget)
+                .OrderByDescending(c => c.SeoScore)
+                .Take(supplementBudget)
                 .ToList();
 
-            if (fallbackQueue.Count > 0)
+            if (supplementQueue.Count > 0)
             {
-                generatorUsed = batch2Triggered ? "brief+batch+recovery+fallback" : "brief+batch+fallback";
+                var tag = available.Count == 0 ? "fallback" : "supplement";
+                generatorUsed = AppendGeneratorTag(generatorUsed, tag);
                 await RunBatchCheckLoopAsync(
-                    fallbackQueue, progress, request, keywords, lang, tlds, maxChecks, target,
+                    supplementQueue, progress, request, keywords, lang, tlds, maxChecks, target,
                     available, unavailableSample, checkedDomains, state, brief, ct);
             }
         }
@@ -356,6 +364,26 @@ public sealed class DomainSearchService : IDomainSearchService
             return [];
         }
     }
+
+    private static HashSet<string> CollectCheckedLabels(
+        HashSet<string> checkedDomains,
+        IReadOnlyList<string> unavailableSample)
+    {
+        var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var domain in checkedDomains.Concat(unavailableSample))
+        {
+            var label = domain.Split('.', 2)[0];
+            if (label.Length > 0)
+                labels.Add(label);
+        }
+
+        return labels;
+    }
+
+    private static string AppendGeneratorTag(string generatorUsed, string tag) =>
+        generatorUsed.Contains('+' + tag, StringComparison.Ordinal)
+            ? generatorUsed
+            : $"{generatorUsed}+{tag}";
 
     private static List<DomainCandidate> LimitBatch(List<DomainCandidate> queue, int max) =>
         queue.Count <= max ? queue : queue.Take(max).ToList();
@@ -717,10 +745,18 @@ public sealed class DomainSearchService : IDomainSearchService
                    $"({unavailableCount} taken or over budget). Try more TLDs or run another search.";
         }
 
-        var top = ranked[0];
-        var price = top.PriceUsd is { } p ? $" at ${p:F2}" : "";
-        return $"Only one option found: {top.FullDomain}{price}. " +
-               $"Checked {checksUsed}/{maxChecks} names — most were taken. Try more TLDs or search again for more coinages.";
+        if (ranked.Count == 1)
+        {
+            var top = ranked[0];
+            var price = top.PriceUsd is { } p ? $" at ${p:F2}" : "";
+            return $"Only one option found: {top.FullDomain}{price}. " +
+                   $"Checked {checksUsed}/{maxChecks} names — most were taken. " +
+                   "Try more TLDs or search again for more coinages.";
+        }
+
+        return $"Found {ranked.Count} options after {checksUsed}/{maxChecks} checks " +
+               $"({unavailableCount} taken or over budget). " +
+               "Add more TLDs if you want additional choices.";
     }
 
     private List<DomainCandidate> PlannedToCandidates(
@@ -763,7 +799,10 @@ public sealed class DomainSearchService : IDomainSearchService
             });
         }
 
-        return list;
+        return list
+            .OrderByDescending(c => c.SeoScore)
+            .ThenBy(c => c.Name.Length)
+            .ToList();
     }
 
     private void BackfillQueue(

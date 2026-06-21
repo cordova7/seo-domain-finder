@@ -82,20 +82,26 @@ public sealed class SeoScorer : ISeoScorer
         var score = 40;
         var parts = new List<string> { "brand scoring" };
 
-        if (name.Length is >= 6 and <= 9)
+        if (name.Length is >= 8 and <= 11)
         {
             score += 15;
-            parts.Add("ideal coined length (6-9)");
+            parts.Add("ideal brand length (8-11)");
         }
-        else if (name.Length is >= 5 and <= 12)
+        else if (name.Length is >= 6 and <= 12)
         {
-            score += 5;
-            parts.Add("acceptable length");
+            score += 8;
+            parts.Add("acceptable coined length");
         }
         else
         {
-            score -= 10;
+            score -= 5;
             parts.Add("length penalty");
+        }
+
+        if (HasSoftMetaphorShape(name))
+        {
+            score += 8;
+            parts.Add("soft metaphor portmanteau");
         }
 
         var literalTerms = keywords.Concat(brief.AvoidTerms).Distinct(StringComparer.OrdinalIgnoreCase);
@@ -140,4 +146,13 @@ public sealed class SeoScorer : ISeoScorer
         score = Math.Clamp(score, 0, 100);
         return new SeoScoreResult(score, string.Join("; ", parts));
     }
+
+    private static readonly string[] MetaphorTails =
+    [
+        "crate", "stall", "mart", "shelf", "drop", "bay", "nook", "loft", "haus", "port", "cart",
+        "buzz", "vibe", "rush", "spark", "wave", "flux", "glow", "pulse"
+    ];
+
+    private static bool HasSoftMetaphorShape(string name) =>
+        MetaphorTails.Any(t => name.EndsWith(t, StringComparison.OrdinalIgnoreCase));
 }

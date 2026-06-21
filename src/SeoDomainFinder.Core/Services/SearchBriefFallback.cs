@@ -14,12 +14,14 @@ public static partial class SearchBriefFallback
 
     private static readonly string[] DefaultAvoidPatterns =
     [
-        "keyword stacks", "-hub", "-app", "-pro", "-ify", "-ly"
+        "keyword stacks", "-hub", "-app", "-pro", "-ify", "-ly", "short trendy .com brands"
     ];
 
     private static readonly string[] DefaultNamingStyles =
     [
-        "coined 6-9 char brands", "portmanteaus", "abstract verbs"
+        "soft metaphor portmanteaus (fadcrate, buzzstall)",
+        "8-11 char opaque blends",
+        "abstract coined brands"
     ];
 
   private static readonly string[] DefaultVibe = ["memorable", "distinctive"];
@@ -28,6 +30,8 @@ public static partial class SearchBriefFallback
     {
         var avoidTerms = new HashSet<string>(TrademarkBlocklist, StringComparer.OrdinalIgnoreCase);
         foreach (var term in DetectMetaphorSources(prompt))
+            avoidTerms.Add(term);
+        foreach (var term in DetectTrademarkVariants(prompt))
             avoidTerms.Add(term);
 
         var conceptKeywords = keywords
@@ -47,8 +51,21 @@ public static partial class SearchBriefFallback
             ConceptKeywords: conceptKeywords,
             AvoidTerms: avoidTerms.ToList(),
             AvoidPatterns: DefaultAvoidPatterns,
-            TldStrategy: "prefer .com for main brand, .io for apps");
+            TldStrategy: "short pronounceable .com names are usually taken; prefer 8-10 char opaque blends on .com");
     }
+
+    internal static IEnumerable<string> DetectTrademarkVariants(string prompt)
+    {
+        if (TikTokPattern().IsMatch(prompt))
+        {
+            yield return "tiktok";
+            yield return "tik";
+            yield return "tok";
+        }
+    }
+
+    [GeneratedRegex(@"\btik[\s\-]?tok\b", RegexOptions.IgnoreCase)]
+    private static partial Regex TikTokPattern();
 
     private static string BuildProductSummary(string prompt)
     {

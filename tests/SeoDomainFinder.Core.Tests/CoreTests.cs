@@ -393,6 +393,44 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
+    public void SearchBriefFallback_PutsTikTokInAvoidTerms()
+    {
+        var keywords = KeywordExtractor.Extract("tik-tok viral store", "en");
+        var brief = SearchBriefFallback.Create("tik-tok viral store", "en", keywords);
+
+        Assert.Contains(brief.AvoidTerms, t => t.Equals("tiktok", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(brief.AvoidTerms, t => t.Equals("tik", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("tik", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_UsesSupplementWhenPartialResults()
+    {
+        var checker = new FirstAvailableChecker();
+        var planner = new RecoveryFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "tik-tok viral store",
+            Language = "en",
+            Tlds = ["com"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.Contains("supplement", result.GeneratorUsed, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, planner.CallCount);
+        Assert.True(result.Candidates.Count >= 1);
+    }
+
+    [Fact]
     public void SearchBriefFallback_PutsTinderInAvoidTerms()
     {
         var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
@@ -423,6 +461,36 @@ public class DomainSearchServiceTests
         Assert.False(DomainQualityFilter.IsAcceptable("tinderhoodstreet", brief, keywords, useLlm: true));
         Assert.False(DomainQualityFilter.IsAcceptable("tinderapp", brief, keywords, useLlm: true));
         Assert.True(DomainQualityFilter.IsAcceptable("brawlr", brief, keywords, useLlm: true));
+    }
+
+    [Fact]
+    public void SeoCoinedNameGenerator_ProducesMetaphorBlends()
+    {
+        var brief = SearchBriefFallback.Create("tik-tok viral store", "en",
+            KeywordExtractor.Extract("tik-tok viral store", "en"));
+        var keywords = KeywordExtractor.Extract("tik-tok viral store", "en");
+
+        var names = SeoCoinedNameGenerator.Generate(brief, keywords, 20);
+
+        Assert.NotEmpty(names);
+        Assert.Contains(names, n => n.EndsWith("crate", StringComparison.OrdinalIgnoreCase)
+            || n.EndsWith("stall", StringComparison.OrdinalIgnoreCase)
+            || n.EndsWith("buzz", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(names, n => n.EndsWith("ify", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void BrandScorer_RanksMetaphorAboveObscure()
+    {
+        var scorer = new SeoScorer();
+        var brief = SearchBriefFallback.Create("tik-tok viral store", "en",
+            KeywordExtractor.Extract("tik-tok viral store", "en"));
+        var keywords = KeywordExtractor.Extract("tik-tok viral store", "en");
+
+        var metaphor = scorer.Score("fadcrate", keywords, "en", brief);
+        var obscure = scorer.Score("virzqlo", keywords, "en", brief);
+
+        Assert.True(metaphor.Score > obscure.Score);
     }
 
     [Fact]

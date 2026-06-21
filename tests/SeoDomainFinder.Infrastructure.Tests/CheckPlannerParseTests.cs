@@ -5,6 +5,16 @@ namespace SeoDomainFinder.Infrastructure.Tests;
 public class CheckPlannerParseTests
 {
     [Fact]
+    public void BuildSystemPrompt_IncludesTieredNamingAndAvailabilityRanking()
+    {
+        var prompt = OpenRouterCheckPlanner.BuildSystemPrompt(isRefill: false, isTopUp: false, takenPatternHint: null);
+
+        Assert.Contains("soft metaphor", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fadcrate", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("omit anything below 70", prompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ApplyCheckCountPlaceholder_DoesNotCorruptJson()
     {
         var prompt = OpenRouterCheckPlanner.ApplyCheckCountPlaceholder(
