@@ -7,8 +7,8 @@ public sealed class DomainSearchService : IDomainSearchService
 {
     private const int RefillCheckThreshold = 15;
     private const int RefillMinRemaining = 5;
-    private const int RecoveryReserve = 8;
-    private const int RecoveryMinFound = 2;
+    private const int Batch1Size = 10;
+    private const int FallbackReserve = 5;
 
     private readonly IEnumerable<INameGenerator> _generators;
     private readonly ISeoScorer _seoScorer;
@@ -88,12 +88,6 @@ public sealed class DomainSearchService : IDomainSearchService
         generatorUsed = nameGen.GeneratorUsed;
         warning = nameGen.Warning ?? warning;
 
-        var queueResult = await BuildQueueAsync(
-            progress, request, nameGen.Names, keywords, lang, tlds, maxChecks, generatorUsed, warning, brief, ct);
-        var queue = queueResult.Queue;
-        generatorUsed = queueResult.GeneratorUsed;
-        warning = queueResult.Warning;
-
         var available = new List<DomainCandidate>();
         var checksUsed = 0;
         var credentialFailures = 0;
@@ -101,60 +95,59 @@ public sealed class DomainSearchService : IDomainSearchService
         var unavailableCount = 0;
         var premiumSkipped = 0;
         var unavailableSample = new List<string>();
-        var state = new CheckLoopState
+        var refillTriggered = false;
+
+        if (useBriefPath)
         {
-            RefillTriggered = false,
-            Warning = warning
-        };
-
-        Report(progress, "checking", 0, maxChecks, 0, null);
-
-        var queueIndex = 0;
-        while (queueIndex < queue.Count)
-        {
-            if (available.Count >= target || state.ChecksUsed >= maxChecks || state.Attempts >= maxChecks)
-                break;
-
-            var candidate = queue[queueIndex++];
-            await ProcessCandidateAsync(
-                candidate, progress, request, keywords, lang, tlds, maxChecks, target, queue,
-                available, unavailableSample, state, brief, ct);
+            var briefResult = await RunAdaptiveBriefSearchAsync(
+                progress, request, keywords, lang, tlds, maxChecks, target, brief!, warning, ct);
+            available = briefResult.Available;
+            checksUsed = briefResult.ChecksUsed;
+            credentialFailures = briefResult.CredentialFailures;
+            rateLimitFailures = briefResult.RateLimitFailures;
+            unavailableCount = briefResult.UnavailableCount;
+            premiumSkipped = briefResult.PremiumSkipped;
+            unavailableSample = briefResult.UnavailableSample;
+            generatorUsed = briefResult.GeneratorUsed;
+            warning = briefResult.Warning;
+            refillTriggered = briefResult.Batch2Triggered;
         }
-
-        warning = state.Warning;
-
-        var recoveryTriggered = false;
-        if (useBriefPath &&
-            available.Count < RecoveryMinFound &&
-            state.ChecksUsed < maxChecks &&
-            maxChecks - state.ChecksUsed >= RefillMinRemaining)
+        else
         {
-            recoveryTriggered = true;
-            var recoveryCandidates = await TryRecoveryPlannerAsync(
-                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                available, state.ChecksUsed, progress, brief, ct);
+            var queueResult = await BuildQueueAsync(
+                progress, request, nameGen.Names, keywords, lang, tlds, maxChecks, generatorUsed, warning, brief, ct);
+            var queue = queueResult.Queue;
+            generatorUsed = queueResult.GeneratorUsed;
+            warning = queueResult.Warning;
 
-            foreach (var candidate in recoveryCandidates)
+            var state = new CheckLoopState
+            {
+                RefillTriggered = false,
+                Warning = warning
+            };
+
+            Report(progress, "checking", 0, maxChecks, 0, null);
+
+            var queueIndex = 0;
+            while (queueIndex < queue.Count)
             {
                 if (available.Count >= target || state.ChecksUsed >= maxChecks || state.Attempts >= maxChecks)
                     break;
 
+                var candidate = queue[queueIndex++];
                 await ProcessCandidateAsync(
                     candidate, progress, request, keywords, lang, tlds, maxChecks, target, queue,
-                    available, unavailableSample, state, brief, ct);
+                    available, unavailableSample, state, brief, enableRefill: true, ct);
             }
+
+            warning = state.Warning;
+            checksUsed = state.ChecksUsed;
+            credentialFailures = state.CredentialFailures;
+            rateLimitFailures = state.RateLimitFailures;
+            unavailableCount = state.UnavailableCount;
+            premiumSkipped = state.PremiumSkipped;
+            refillTriggered = state.RefillTriggered;
         }
-
-        warning = state.Warning;
-        checksUsed = state.ChecksUsed;
-        credentialFailures = state.CredentialFailures;
-        rateLimitFailures = state.RateLimitFailures;
-        unavailableCount = state.UnavailableCount;
-        premiumSkipped = state.PremiumSkipped;
-        var refillTriggered = state.RefillTriggered;
-
-        if (recoveryTriggered && generatorUsed == "brief+planner")
-            generatorUsed = "brief+planner+recovery";
 
         warning = BuildAvailabilityWarning(
             warning, available, checksUsed, credentialFailures, rateLimitFailures,
@@ -212,6 +205,226 @@ public sealed class DomainSearchService : IDomainSearchService
 
         Report(progress, "done", checksUsed, maxChecks, ranked.Count, null);
         return result;
+    }
+
+    private sealed record BriefBatchResult(
+        List<DomainCandidate> Available,
+        int ChecksUsed,
+        int CredentialFailures,
+        int RateLimitFailures,
+        int UnavailableCount,
+        int PremiumSkipped,
+        List<string> UnavailableSample,
+        string GeneratorUsed,
+        string? Warning,
+        bool Batch2Triggered);
+
+    private async Task<BriefBatchResult> RunAdaptiveBriefSearchAsync(
+        IProgress<SearchProgressEvent>? progress,
+        DomainSearchRequest request,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        int target,
+        SearchBrief brief,
+        string? warning,
+        CancellationToken ct)
+    {
+        var generatorUsed = "brief+batch";
+        var state = new CheckLoopState { Warning = warning };
+        var available = new List<DomainCandidate>();
+        var unavailableSample = new List<string>();
+        var checkedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var batch2Triggered = false;
+
+        var batch1Queue = await PlanBriefBatchAsync(
+            progress, request, keywords, lang, tlds, maxChecks, brief, state,
+            Batch1Size, takenSample: null, takenHint: null, saturatedRoots: null, ct);
+
+        if (batch1Queue.Count == 0)
+        {
+            state.Warning = AppendWarning(state.Warning,
+                "AI planner returned no valid domains; checking heuristic names.");
+            batch1Queue = LimitBatch(
+                await BuildFallbackQueueAsync(request, [], keywords, lang, tlds, ct),
+                Batch1Size);
+        }
+
+        await RunBatchCheckLoopAsync(
+            batch1Queue, progress, request, keywords, lang, tlds, maxChecks, target,
+            available, unavailableSample, checkedDomains, state, brief, ct);
+
+        if (available.Count < target &&
+            state.ChecksUsed < maxChecks &&
+            maxChecks - state.ChecksUsed > FallbackReserve)
+        {
+            batch2Triggered = true;
+            generatorUsed = "brief+batch+recovery";
+
+            var analysis = TakenPatternAnalyzer.Analyze(unavailableSample, tlds);
+            var batch2Budget = Math.Min(
+                maxChecks - Batch1Size,
+                maxChecks - state.ChecksUsed - FallbackReserve);
+
+            if (batch2Budget >= RefillMinRemaining)
+            {
+                var batch2Queue = await PlanBriefBatchAsync(
+                    progress, request, keywords, lang, tlds, maxChecks, brief, state,
+                    batch2Budget, unavailableSample, analysis.PlannerHint, analysis.SaturatedRoots, ct);
+
+                await RunBatchCheckLoopAsync(
+                    batch2Queue, progress, request, keywords, lang, tlds, maxChecks, target,
+                    available, unavailableSample, checkedDomains, state, brief, ct);
+            }
+        }
+
+        if (available.Count == 0 &&
+            state.ChecksUsed < maxChecks &&
+            maxChecks - state.ChecksUsed >= 1)
+        {
+            var fallbackBudget = Math.Min(FallbackReserve, maxChecks - state.ChecksUsed);
+            var coined = SeoCoinedNameGenerator.Generate(brief, keywords, fallbackBudget * 2);
+            var fallbackQueue = BuildCoinedFallbackQueue(coined, tlds, keywords, lang, brief)
+                .Where(c => checkedDomains.Add(c.FullDomain))
+                .Take(fallbackBudget)
+                .ToList();
+
+            if (fallbackQueue.Count > 0)
+            {
+                generatorUsed = batch2Triggered ? "brief+batch+recovery+fallback" : "brief+batch+fallback";
+                await RunBatchCheckLoopAsync(
+                    fallbackQueue, progress, request, keywords, lang, tlds, maxChecks, target,
+                    available, unavailableSample, checkedDomains, state, brief, ct);
+            }
+        }
+
+        return new BriefBatchResult(
+            available,
+            state.ChecksUsed,
+            state.CredentialFailures,
+            state.RateLimitFailures,
+            state.UnavailableCount,
+            state.PremiumSkipped,
+            unavailableSample,
+            generatorUsed,
+            state.Warning,
+            batch2Triggered);
+    }
+
+    private async Task<List<DomainCandidate>> PlanBriefBatchAsync(
+        IProgress<SearchProgressEvent>? progress,
+        DomainSearchRequest request,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        SearchBrief brief,
+        CheckLoopState state,
+        int batchBudget,
+        IReadOnlyList<string>? takenSample,
+        string? takenHint,
+        IReadOnlyList<string>? saturatedRoots,
+        CancellationToken ct)
+    {
+        var isBatch2 = takenSample is { Count: > 0 };
+        Report(progress, isBatch2 ? "refining" : "planning", state.ChecksUsed, maxChecks, 0, null);
+
+        try
+        {
+            var planned = await _checkPlanner!.PlanAsync(new CheckPlannerRequest(
+                request.Prompt,
+                lang,
+                keywords,
+                tlds,
+                maxChecks,
+                request.MaxPriceUsd,
+                [],
+                request.OpenRouterApiKey,
+                takenSample?.ToList(),
+                batchBudget,
+                takenHint,
+                brief), ct);
+
+            return LimitBatch(
+                PlannedToCandidates(planned, keywords, lang, brief, saturatedRoots),
+                batchBudget);
+        }
+        catch (Exception ex)
+        {
+            state.Warning = AppendWarning(state.Warning, $"AI planner failed: {ex.Message}");
+            return [];
+        }
+    }
+
+    private static List<DomainCandidate> LimitBatch(List<DomainCandidate> queue, int max) =>
+        queue.Count <= max ? queue : queue.Take(max).ToList();
+
+    private async Task RunBatchCheckLoopAsync(
+        IReadOnlyList<DomainCandidate> batch,
+        IProgress<SearchProgressEvent>? progress,
+        DomainSearchRequest request,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        int target,
+        List<DomainCandidate> available,
+        List<string> unavailableSample,
+        HashSet<string> checkedDomains,
+        CheckLoopState state,
+        SearchBrief brief,
+        CancellationToken ct)
+    {
+        if (batch.Count == 0)
+            return;
+
+        if (state.ChecksUsed == 0 && available.Count == 0)
+            Report(progress, "checking", 0, maxChecks, 0, null);
+
+        var noopQueue = new List<DomainCandidate>();
+        foreach (var candidate in batch)
+        {
+            if (available.Count >= target || state.ChecksUsed >= maxChecks || state.Attempts >= maxChecks)
+                break;
+
+            if (!checkedDomains.Add(candidate.FullDomain))
+                continue;
+
+            await ProcessCandidateAsync(
+                candidate, progress, request, keywords, lang, tlds, maxChecks, target, noopQueue,
+                available, unavailableSample, state, brief, enableRefill: false, ct);
+        }
+    }
+
+    private List<DomainCandidate> BuildCoinedFallbackQueue(
+        IReadOnlyList<string> labels,
+        IReadOnlyList<string> tlds,
+        IReadOnlyList<string> keywords,
+        string lang,
+        SearchBrief brief)
+    {
+        var orderedTlds = tlds.Count > 0 ? tlds : (IReadOnlyList<string>)["com"];
+        var list = new List<DomainCandidate>();
+
+        for (var i = 0; i < labels.Count; i++)
+        {
+            var label = labels[i];
+            if (!DomainQualityFilter.IsAcceptable(label, brief, keywords, useLlm: true))
+                continue;
+
+            var tld = orderedTlds[i % orderedTlds.Count];
+            var seo = _seoScorer.Score(label, keywords, lang, brief);
+            list.Add(new DomainCandidate
+            {
+                Name = label,
+                Tld = tld,
+                SeoScore = seo.Score,
+                SeoExplanation = seo.Explanation
+            });
+        }
+
+        return list;
     }
 
     private sealed record NameGenResult(
@@ -373,6 +586,7 @@ public sealed class DomainSearchService : IDomainSearchService
         List<string> unavailableSample,
         CheckLoopState state,
         SearchBrief? brief,
+        bool enableRefill,
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -396,10 +610,13 @@ public sealed class DomainSearchService : IDomainSearchService
         if (string.Equals(check.Reason, DomainCheckReasons.Premium, StringComparison.OrdinalIgnoreCase))
         {
             state.PremiumSkipped++;
-            ApplyRefillOutcome(await TryRefillAsync(
-                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
-                state);
+            if (enableRefill)
+            {
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
+                    state);
+            }
             return;
         }
 
@@ -408,10 +625,13 @@ public sealed class DomainSearchService : IDomainSearchService
             state.UnavailableCount++;
             if (unavailableSample.Count < 12)
                 unavailableSample.Add(candidate.FullDomain);
-            ApplyRefillOutcome(await TryRefillAsync(
-                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
-                state);
+            if (enableRefill)
+            {
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
+                    state);
+            }
             return;
         }
 
@@ -423,10 +643,13 @@ public sealed class DomainSearchService : IDomainSearchService
             state.UnavailableCount++;
             if (unavailableSample.Count < 12)
                 unavailableSample.Add(candidate.FullDomain);
-            ApplyRefillOutcome(await TryRefillAsync(
-                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
-                state);
+            if (enableRefill)
+            {
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
+                    state);
+            }
             return;
         }
 
@@ -438,10 +661,13 @@ public sealed class DomainSearchService : IDomainSearchService
 
         ReportFound(progress, state.ChecksUsed, maxChecks, available.Count, candidate);
 
-        ApplyRefillOutcome(await TryRefillAsync(
-            request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-            state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
-            state);
+        if (enableRefill)
+        {
+            ApplyRefillOutcome(await TryRefillAsync(
+                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                state.RefillTriggered, available, state.ChecksUsed, progress, brief, ct),
+                state);
+        }
     }
 
     private async Task<List<DomainCandidate>> TryBuildPlannerQueueAsync(
@@ -455,7 +681,7 @@ public sealed class DomainSearchService : IDomainSearchService
         CancellationToken ct)
     {
         var seeds = brief is not null ? [] : rawNames.ToList();
-        var initialBudget = brief is not null ? Math.Max(12, maxChecks - RecoveryReserve) : (int?)null;
+        var initialBudget = brief is not null ? (int?)null : null;
         var planned = await _checkPlanner!.PlanAsync(new CheckPlannerRequest(
             request.Prompt,
             lang,
@@ -501,7 +727,8 @@ public sealed class DomainSearchService : IDomainSearchService
         IReadOnlyList<PlannedCheck> planned,
         IReadOnlyList<string> keywords,
         string lang,
-        SearchBrief? brief = null)
+        SearchBrief? brief = null,
+        IReadOnlyList<string>? saturatedRoots = null)
     {
         var list = new List<DomainCandidate>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -512,7 +739,7 @@ public sealed class DomainSearchService : IDomainSearchService
                 continue;
 
             if (brief is not null &&
-                !DomainQualityFilter.IsAcceptable(item.Label, brief, keywords, useLlm: true))
+                !DomainQualityFilter.IsAcceptable(item.Label, brief, keywords, useLlm: true, saturatedRoots))
                 continue;
 
             var key = $"{item.Label}.{item.Tld}";
@@ -593,6 +820,8 @@ public sealed class DomainSearchService : IDomainSearchService
                 queue.Select(c => c.FullDomain),
                 StringComparer.OrdinalIgnoreCase);
 
+            var analysis = TakenPatternAnalyzer.Analyze(unavailableSample, tlds);
+
             var refill = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
                 request.Prompt,
                 lang,
@@ -604,7 +833,7 @@ public sealed class DomainSearchService : IDomainSearchService
                 request.OpenRouterApiKey,
                 unavailableSample.ToList(),
                 maxChecks - checksUsed,
-                DeriveTakenPatternHint(unavailableSample),
+                analysis.PlannerHint,
                 brief), ct);
 
             foreach (var candidate in PlannedToCandidates(refill, keywords, lang, brief))
@@ -633,98 +862,10 @@ public sealed class DomainSearchService : IDomainSearchService
             state.Warning = AppendWarning(state.Warning, outcome.WarningAppend);
     }
 
-    private async Task<List<DomainCandidate>> TryRecoveryPlannerAsync(
-        DomainSearchRequest request,
-        IReadOnlyList<string> keywords,
-        string lang,
-        IReadOnlyList<string> tlds,
-        int maxChecks,
-        List<DomainCandidate> queue,
-        List<string> unavailableSample,
-        List<DomainCandidate> available,
-        int checksUsed,
-        IProgress<SearchProgressEvent>? progress,
-        SearchBrief? brief,
-        CancellationToken ct)
-    {
-        if (_checkPlanner is null)
-            return [];
-
-        Report(progress, "refining", checksUsed, maxChecks, available.Count, null);
-
-        try
-        {
-            var alreadyChecked = new HashSet<string>(
-                queue.Select(c => c.FullDomain),
-                StringComparer.OrdinalIgnoreCase);
-
-            var taken = unavailableSample.ToList();
-            foreach (var found in available)
-            {
-                if (taken.Count >= 12)
-                    break;
-                if (!taken.Contains(found.FullDomain, StringComparer.OrdinalIgnoreCase))
-                    taken.Add(found.FullDomain);
-            }
-
-            var remaining = maxChecks - checksUsed;
-            var recovery = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
-                request.Prompt,
-                lang,
-                keywords,
-                tlds,
-                maxChecks,
-                request.MaxPriceUsd,
-                [],
-                request.OpenRouterApiKey,
-                taken,
-                remaining,
-                DeriveTakenPatternHint(taken),
-                brief), ct);
-
-            var added = new List<DomainCandidate>();
-            foreach (var candidate in PlannedToCandidates(recovery, keywords, lang, brief))
-            {
-                if (alreadyChecked.Add(candidate.FullDomain))
-                {
-                    queue.Add(candidate);
-                    added.Add(candidate);
-                }
-            }
-
-            return added;
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
     private sealed record RefillOutcome(string? WarningAppend);
 
-    internal static string? DeriveTakenPatternHint(IReadOnlyList<string> taken)
-    {
-        if (taken.Count == 0)
-            return null;
-
-        var labels = taken
-            .Select(d => d.Split('.', 2)[0])
-            .Where(l => l.Length > 0)
-            .ToList();
-
-        if (labels.Count == 0)
-            return null;
-
-        var suffixHits = labels.Count(l =>
-            l.EndsWith("ify", StringComparison.OrdinalIgnoreCase) ||
-            l.EndsWith("ly", StringComparison.OrdinalIgnoreCase) ||
-            (l.Length >= 5 && l.EndsWith('r')));
-
-        if (suffixHits < (labels.Count + 1) / 2)
-            return null;
-
-        return "Taken names heavily used -ify, -ly, or -r suffixes. Use different coined blends (portmanteaus, 6-9 chars).";
-    }
+    internal static string? DeriveTakenPatternHint(IReadOnlyList<string> taken) =>
+        TakenPatternAnalyzer.Analyze(taken, ["com"]).PlannerHint;
 
     private static List<string> NormalizeTlds(IReadOnlyList<string> requestTlds)
     {

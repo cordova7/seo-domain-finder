@@ -104,11 +104,12 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         else if (isRefill)
         {
             systemPrompt = """
-                Previous names were taken. Generate NEW coined domains only.
+                Batch 1 names were taken. Generate NEW coined domains that still evoke the same conceptKeywords for SEO.
                 Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 88 } ] }
                 No explanation, no markdown, no text before or after the JSON.
                 Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
-                Opaque portmanteaus only — never copy taken names or their patterns.
+                Use opaque portmanteaus with one soft concept hit — not keyword stacks or taken labels.
+                Avoid roots and patterns listed in the taken hint. Do not reuse taken labels.
                 NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
                 If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
                 Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
@@ -121,10 +122,10 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 Respond with a single JSON object: { "checks": [ { "label": "sparqo", "tld": "io", "score": 92 }, { "label": "brawlr", "tld": "com", "score": 90 } ] }
                 No explanation, no markdown, no text before or after the JSON.
                 Rules: lowercase labels, no hyphens/numbers, 6-8 chars, one TLD per label.
-                Coined pronounceable brands only — not dictionary words with startup suffixes.
+                Coined or portmanteau brands that evoke ONE conceptKeyword from the brief — not dictionary+suffix spam.
                 NEVER use fight/batt/clash/punch prefixes or -ix/-ly/-ify/-hub suffixes.
                 If multiple TLDs are allowed, use each roughly equally (no more than half on .com).
-                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 12 if possible).
+                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
                 """;
         }
 

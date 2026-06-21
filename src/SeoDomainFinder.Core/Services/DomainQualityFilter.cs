@@ -7,11 +7,21 @@ public static class DomainQualityFilter
     private static readonly string[] ModifierSuffixes =
         ["app", "hub", "pro", "now", "auto", "online", "digital", "cloud"];
 
+    private static readonly string[] BannedSuffixes = ["ify", "ly", "ix", "hub"];
+
     public static bool IsAcceptable(
         string label,
         SearchBrief? brief,
         IReadOnlyList<string> keywords,
-        bool useLlm)
+        bool useLlm) =>
+        IsAcceptable(label, brief, keywords, useLlm, saturatedRoots: null);
+
+    public static bool IsAcceptable(
+        string label,
+        SearchBrief? brief,
+        IReadOnlyList<string> keywords,
+        bool useLlm,
+        IReadOnlyList<string>? saturatedRoots)
     {
         if (!NameSanitizer.IsValidDomainName(label))
             return false;
@@ -24,10 +34,22 @@ public static class DomainQualityFilter
         if (name.Length is < 5 or > 14)
             return false;
 
+        if (BannedSuffixes.Any(s => name.EndsWith(s, StringComparison.Ordinal)))
+            return false;
+
         foreach (var term in brief.AvoidTerms)
         {
             if (term.Length >= 3 && name.Contains(term, StringComparison.OrdinalIgnoreCase))
                 return false;
+        }
+
+        if (saturatedRoots is not null)
+        {
+            foreach (var root in saturatedRoots)
+            {
+                if (root.Length >= 3 && name.Contains(root, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
         }
 
         var keywordHits = CountKeywordHits(name, keywords);

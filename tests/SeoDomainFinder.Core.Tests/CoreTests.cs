@@ -183,6 +183,34 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
+    public void TakenPatternAnalyzer_DetectsSuffixCluster()
+    {
+        var analysis = TakenPatternAnalyzer.Analyze(
+        [
+            "bookify.com",
+            "linkify.io",
+            "engageo.com",
+            "tindly.net"
+        ],
+        ["com", "io"]);
+
+        Assert.NotNull(analysis.PlannerHint);
+        Assert.Contains("-ify", analysis.PlannerHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DomainQualityFilter_RejectsIifySuffix()
+    {
+        var brief = SearchBriefFallback.Create("business booking app", "en",
+            KeywordExtractor.Extract("business booking app", "en"));
+        var keywords = KeywordExtractor.Extract("business booking app", "en");
+
+        Assert.False(DomainQualityFilter.IsAcceptable("bookify", brief, keywords, useLlm: true));
+        Assert.False(DomainQualityFilter.IsAcceptable("linkly", brief, keywords, useLlm: true));
+        Assert.True(DomainQualityFilter.IsAcceptable("brawlr", brief, keywords, useLlm: true));
+    }
+
+    [Fact]
     public void DeriveTakenPatternHint_DetectsSuffixHeavyNames()
     {
         var hint = DomainSearchService.DeriveTakenPatternHint(
@@ -440,7 +468,7 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
-    public async Task Search_WithBrief_UsesBriefPlusPlannerGenerator()
+    public async Task Search_WithBrief_UsesBriefPlusBatchGenerator()
     {
         var checker = new FakeChecker(availableAfter: 1);
         var planner = new FakePlanner([new PlannedCheck("brawlr", "io", 90)]);
@@ -457,16 +485,94 @@ public class DomainSearchServiceTests
             Language = "en",
             Tlds = ["com", "io"],
             UseLlm = true,
-            MaxCandidates = 5,
+            MaxCandidates = 1,
             MaxChecks = 25
         });
 
-        Assert.StartsWith("brief+planner", result.GeneratorUsed);
+        Assert.StartsWith("brief+batch", result.GeneratorUsed);
         Assert.Contains(result.Candidates, c => c.FullDomain == "brawlr.io");
     }
 
     [Fact]
-    public async Task Search_WithBrief_TriggersRecoveryWhenFewFound()
+    public async Task Search_WithBrief_UsesTwoBatchesWhenFirstExhausted()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new TwoBatchFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "business booking app",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.Equal(2, planner.CallCount);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_SkipsBatch2WhenTargetMet()
+    {
+        var checker = new FakeChecker(availableAfter: 1);
+        var planner = new CountingFakePlanner(
+            Enumerable.Range(0, 10)
+                .Select(i => new PlannedCheck($"avail{i}", "io", 85))
+                .ToList());
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "pet grooming service",
+            Language = "en",
+            Tlds = ["io"],
+            UseLlm = true,
+            MaxCandidates = 2,
+            MaxChecks = 25
+        });
+
+        Assert.Equal(1, planner.CallCount);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_CodeFallbackWhenBothBatchesEmpty()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new TwoBatchFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "business booking app",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.Contains("fallback", result.GeneratorUsed, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_TriggersBatch2WhenFewFound()
     {
         var checker = new FirstAvailableChecker();
         var planner = new RecoveryFakePlanner();
@@ -571,6 +677,34 @@ public class DomainSearchServiceTests
         {
             LastRequest = request;
             return Task.FromResult(checks);
+        }
+    }
+
+    private sealed class CountingFakePlanner(IReadOnlyList<PlannedCheck> checks) : ICheckPlanner
+    {
+        public int CallCount { get; private set; }
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            CallCount++;
+            return Task.FromResult(checks);
+        }
+    }
+
+    private sealed class TwoBatchFakePlanner : ICheckPlanner
+    {
+        private int _calls;
+        public int CallCount => _calls;
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            _calls++;
+            var budget = request.RemainingChecks ?? 10;
+            var prefix = _calls == 1 ? "taken1" : "taken2";
+            return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                Enumerable.Range(0, budget)
+                    .Select(i => new PlannedCheck($"{prefix}{(char)('a' + (i % 26))}", i % 2 == 0 ? "com" : "io", 70))
+                    .ToList());
         }
     }
 
