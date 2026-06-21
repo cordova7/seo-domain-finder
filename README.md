@@ -93,7 +93,7 @@ dotnet test
 | `OpenRouter__ApiKey` | Optional | For demo AI enhancement |
 | `OpenRouter__Model` | No | Default: `openrouter/free` |
 | `Cors__AllowedOrigins` | Yes | Vercel URL(s), comma-separated |
-| `DemoRateLimit__LlmPerHour` | No | Default: `5` |
+| `DemoRateLimit__LlmPerHour` | No | Default: `8` (3 calls per AI search: plan + refill + advice) |
 | `DemoRateLimit__ChecksPerSession` | No | Default: `25` |
 | `PORT` | Render | Set by Render (`8080`) |
 

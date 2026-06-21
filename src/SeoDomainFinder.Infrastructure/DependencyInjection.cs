@@ -40,6 +40,8 @@ public static class DependencyInjection
         services.AddSingleton<ISeoScorer, SeoScorer>();
         services.AddSingleton<INameGenerator, HeuristicNameGenerator>();
         services.AddSingleton<INameGenerator, OpenRouterNameGenerator>();
+        services.AddSingleton<ICheckPlanner, OpenRouterCheckPlanner>();
+        services.AddSingleton<IDomainAdvisor, OpenRouterAdvisor>();
         services.AddSingleton<PorkbunDomainChecker>();
         services.AddSingleton<IDomainAvailabilityChecker>(sp => sp.GetRequiredService<PorkbunDomainChecker>());
         services.AddSingleton<IDomainSearchService, DomainSearchService>();

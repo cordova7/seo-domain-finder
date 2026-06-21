@@ -17,7 +17,7 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
     private readonly IOptionsMonitor<PorkbunOptions> _options;
     private readonly ILogger<PorkbunDomainChecker> _logger;
     private readonly SemaphoreSlim _throttle = new(1, 1);
-    private DateTime _lastCall = DateTime.MinValue;
+    private DateTime _nextAllowedCallUtc = DateTime.MinValue;
     private readonly ConcurrentDictionary<string, (string? ApiKey, string? Secret)> _sessionCredentials = new();
 
     public PorkbunDomainChecker(
@@ -65,6 +65,7 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
             _logger.LogInformation(
                 "Porkbun rate limit for {Domain}, waiting {WaitMs}ms (attempt {Attempt})",
                 fullDomain, waitMs, attempt + 1);
+            _nextAllowedCallUtc = DateTime.UtcNow.AddMilliseconds(waitMs);
             await Task.Delay(waitMs, ct);
         }
 
@@ -77,15 +78,18 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
         (result.Reason?.Contains("within 10 seconds", StringComparison.OrdinalIgnoreCase) ?? false) ||
         (result.Reason?.Contains("RATE_LIMIT", StringComparison.OrdinalIgnoreCase) ?? false);
 
+    public static bool IsPremium(DomainCheckResult result) =>
+        string.Equals(result.Reason, DomainCheckReasons.Premium, StringComparison.OrdinalIgnoreCase);
+
     public static int ParseRetryDelayMs(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
             return 10_000;
 
-        var match = System.Text.RegularExpressions.Regex.Match(reason, @"ttl:(\d+)", 
+        var match = System.Text.RegularExpressions.Regex.Match(reason, @"ttl:(\d+)",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (match.Success && int.TryParse(match.Groups[1].Value, out var ttl) && ttl > 0)
-            return ttl * 1000;
+            return Math.Max(10_000, ttl * 1000);
 
         return 10_000;
     }
@@ -118,6 +122,7 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
                 if (IsRateLimitMessage(message))
                 {
                     var ttl = result.TtlRemaining ?? 10;
+                    ScheduleNextCall(ttl);
                     return new DomainCheckResult(
                         fullDomain, false, null, null, $"rate_limited|ttl:{ttl}|{message}");
                 }
@@ -126,9 +131,20 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
                 return new DomainCheckResult(fullDomain, false, null, null, message);
             }
 
-            var avail = result.Response?.Avail ?? result.Avail;
-            var priceStr = result.Response?.Price ?? result.Price;
-            var type = result.Response?.Type ?? result.Type;
+            var inner = result.Response;
+            var avail = inner?.Avail ?? result.Avail;
+            var priceStr = inner?.Price ?? result.Price;
+            var type = inner?.Type ?? result.Type;
+            var isPremium = inner?.IsPremium == true;
+            var ttlRemaining = result.TtlRemaining;
+            ScheduleNextCall(ttlRemaining);
+
+            if (isPremium)
+            {
+                return new DomainCheckResult(
+                    fullDomain, false, null, type, DomainCheckReasons.Premium);
+            }
+
             var available = string.Equals(avail, "yes", StringComparison.OrdinalIgnoreCase);
             decimal? price = decimal.TryParse(priceStr, out var p) ? p : null;
             return new DomainCheckResult(
@@ -143,6 +159,15 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
             _logger.LogError(ex, "Porkbun API error for {Domain}", fullDomain);
             return new DomainCheckResult(fullDomain, false, null, null, ex.Message);
         }
+    }
+
+    private void ScheduleNextCall(int? ttlRemainingSeconds)
+    {
+        var minDelay = _options.CurrentValue.MinDelayMs;
+        var delayMs = ttlRemainingSeconds is > 0
+            ? Math.Max(minDelay, ttlRemainingSeconds.Value * 1000)
+            : minDelay;
+        _nextAllowedCallUtc = DateTime.UtcNow.AddMilliseconds(delayMs);
     }
 
     private static bool IsRateLimitMessage(string message) =>
@@ -164,11 +189,9 @@ public sealed class PorkbunDomainChecker : IDomainAvailabilityChecker
         await _throttle.WaitAsync(ct);
         try
         {
-            var delay = _options.CurrentValue.MinDelayMs -
-                        (int)(DateTime.UtcNow - _lastCall).TotalMilliseconds;
+            var delay = (int)(_nextAllowedCallUtc - DateTime.UtcNow).TotalMilliseconds;
             if (delay > 0)
                 await Task.Delay(delay, ct);
-            _lastCall = DateTime.UtcNow;
         }
         finally
         {

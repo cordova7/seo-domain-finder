@@ -1,20 +1,24 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { SearchProgressEvent } from "@/lib/search-progress";
 
 type Props = {
   progress: SearchProgressEvent;
   labels: {
     generating: string;
+    planning: string;
     checking: string;
+    refining: string;
+    advising: string;
     found: string;
     remaining: string;
     complete: string;
   };
 };
 
-function formatEta(seconds: number | null): string {
-  if (seconds == null || seconds <= 0) return "";
+function formatEta(seconds: number): string {
+  if (seconds <= 0) return "";
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   if (m === 0) return `${s}s`;
@@ -22,7 +26,8 @@ function formatEta(seconds: number | null): string {
 }
 
 function percentFor(progress: SearchProgressEvent): number {
-  if (progress.phase === "generating") return 8;
+  if (progress.phase === "generating" || progress.phase === "planning") return 8;
+  if (progress.phase === "refining" || progress.phase === "advising") return 95;
   if (progress.phase === "done") return 100;
   if (progress.maxChecks <= 0) return 0;
   const checkPct = (progress.checksUsed / progress.maxChecks) * 92;
@@ -30,11 +35,28 @@ function percentFor(progress: SearchProgressEvent): number {
 }
 
 export function SearchProgress({ progress, labels }: Props) {
+  const [countdown, setCountdown] = useState<number | null>(progress.etaSeconds);
+
+  useEffect(() => {
+    setCountdown(progress.etaSeconds);
+  }, [progress.etaSeconds, progress.checksUsed, progress.phase]);
+
+  useEffect(() => {
+    if (countdown == null || countdown <= 0) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev != null && prev > 0 ? prev - 1 : prev));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [countdown]);
+
   const pct = percentFor(progress);
-  const eta = formatEta(progress.etaSeconds);
+  const eta = countdown != null ? formatEta(countdown) : "";
 
   let status = labels.generating;
-  if (progress.phase === "checking") {
+  if (progress.phase === "planning") status = labels.planning;
+  else if (progress.phase === "refining") status = labels.refining;
+  else if (progress.phase === "advising") status = labels.advising;
+  else if (progress.phase === "checking" || progress.phase === "found") {
     status = progress.currentDomain
       ? `${labels.checking} ${progress.currentDomain} (${progress.checksUsed}/${progress.maxChecks})`
       : `${labels.checking} (${progress.checksUsed}/${progress.maxChecks})`;
@@ -57,7 +79,7 @@ export function SearchProgress({ progress, labels }: Props) {
       </div>
 
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-zinc-400">
-        {progress.phase === "checking" && (
+        {(progress.phase === "checking" || progress.phase === "found") && (
           <>
             <span>
               {labels.found}: {progress.foundCount}
@@ -69,8 +91,8 @@ export function SearchProgress({ progress, labels }: Props) {
             )}
           </>
         )}
-        {progress.phase === "generating" && (
-          <span className="animate-pulse">{labels.generating}</span>
+        {(progress.phase === "generating" || progress.phase === "planning") && (
+          <span className="animate-pulse">{status}</span>
         )}
       </div>
     </div>

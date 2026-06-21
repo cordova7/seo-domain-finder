@@ -138,7 +138,7 @@ public static class DomainEndpoints
 
         if (useLlm && string.IsNullOrWhiteSpace(dto.OpenRouterApiKey))
         {
-            if (!rateLimiter.TryConsumeLlm(clientId, out var llmRemaining))
+            if (!rateLimiter.TryConsumeLlm(clientId, 3, out var llmRemaining))
             {
                 error = Results.Json(
                     new { error = "LLM rate limit exceeded. Try again later or disable AI enhancement.", remaining = llmRemaining },
@@ -201,7 +201,8 @@ public static class DomainEndpoints
             availableOnly,
             result.GeneratorUsed,
             result.ExtractedKeywords,
-            result.Warning);
+            result.Warning,
+            result.Advice);
     }
 
     private sealed record PreparedSearch(DomainSearchRequest Request);

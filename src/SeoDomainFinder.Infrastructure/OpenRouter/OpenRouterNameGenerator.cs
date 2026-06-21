@@ -36,23 +36,28 @@ public sealed class OpenRouterNameGenerator : INameGenerator
             throw new InvalidOperationException("OpenRouter API key not configured");
 
         var lang = KeywordExtractor.DetectLanguage(request.Prompt, request.Language);
-        var client = _httpClientFactory.CreateClient("OpenRouter");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        var keywords = KeywordExtractor.Extract(request.Prompt, lang);
+        var tldList = string.Join(", ", request.Tlds.Select(t => $".{t.Trim().TrimStart('.')}"));
 
         var systemPrompt = """
             You generate SEO-friendly domain name candidates (domain label only, no TLD).
             Rules: lowercase, no hyphens, no numbers, 5-12 characters, easy to pronounce.
-            Prefer short creative blends (e.g. alertasjud, judalerta) over long concatenations of every keyword.
+            Prefer short coined brand blends (e.g. pawlynx, walklio) over obvious dictionary phrases likely taken on .com.
             Do not append country codes like mx, us, or uk to the label.
-            Combine 1-2 core words from the user's business description for search intent.
+            Combine 1-2 core keywords from the business description for search intent.
             Return ONLY a JSON array of strings, no markdown.
             """;
 
         var userPrompt = $"""
             Language: {lang}
+            Keywords: {string.Join(", ", keywords)}
+            Allowed TLDs: {tldList}
             Business description: {request.Prompt}
-            Generate {request.MaxCandidates} unique domain name labels optimized for SEO.
+            Generate {request.MaxCandidates} unique domain name labels optimized for SEO and likely availability.
             """;
+
+        var client = _httpClientFactory.CreateClient("OpenRouter");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         var payload = new
         {

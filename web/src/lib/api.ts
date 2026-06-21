@@ -18,6 +18,7 @@ export type SearchResponse = {
   generatorUsed: string;
   extractedKeywords: string[];
   warning: string | null;
+  advice: string | null;
 };
 
 export type SearchRequest = {
@@ -30,7 +31,11 @@ export type SearchRequest = {
 
 export type { SearchProgressEvent, SearchStreamDone } from "./search-progress";
 
-import type { SearchProgressEvent, SearchStreamDone } from "./search-progress";
+import type {
+  SearchProgressEvent,
+  SearchProgressFoundCandidate,
+  SearchStreamDone,
+} from "./search-progress";
 
 function getSessionId(): string {
   if (typeof window === "undefined") return "";
@@ -53,9 +58,25 @@ function buildBody(req: SearchRequest) {
   });
 }
 
+function toCandidate(found: SearchProgressFoundCandidate): DomainCandidate {
+  return {
+    name: found.name,
+    tld: found.tld,
+    fullDomain: found.fullDomain,
+    seoScore: found.seoScore,
+    seoExplanation: found.seoExplanation,
+    available: true,
+    priceUsd: found.priceUsd,
+    priceType: "standard",
+    totalScore: found.seoScore + 10,
+    unavailableReason: null,
+  };
+}
+
 export async function searchDomainsStream(
   req: SearchRequest,
-  onProgress: (event: SearchProgressEvent) => void
+  onProgress: (event: SearchProgressEvent) => void,
+  onFound?: (candidate: DomainCandidate) => void
 ): Promise<SearchResponse> {
   const res = await fetch(`${API_URL}/api/v1/domains/search/stream`, {
     method: "POST",
@@ -108,6 +129,7 @@ export async function searchDomainsStream(
           generatorUsed: done.result.generatorUsed,
           extractedKeywords: done.result.extractedKeywords,
           warning: done.result.warning,
+          advice: done.result.advice,
         };
         onProgress({
           phase: "done",
@@ -119,6 +141,9 @@ export async function searchDomainsStream(
         });
       } else {
         onProgress(event);
+        if (event.phase === "found" && event.foundCandidate) {
+          onFound?.(toCandidate(event.foundCandidate));
+        }
       }
     }
   }

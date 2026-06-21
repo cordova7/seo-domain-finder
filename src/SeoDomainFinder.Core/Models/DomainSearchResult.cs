@@ -6,4 +6,5 @@ public sealed class DomainSearchResult
     public required string GeneratorUsed { get; init; }
     public IReadOnlyList<string> ExtractedKeywords { get; init; } = [];
     public string? Warning { get; init; }
+    public string? Advice { get; init; }
 }

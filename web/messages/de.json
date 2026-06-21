@@ -38,10 +38,14 @@
   "error": "Fehler",
   "noResults": "Keine Ergebnisse. Andere Beschreibung versuchen.",
   "progressGenerating": "SEO-Namen werden generiert...",
+  "progressPlanning": "KI plant zu prüfende Domains...",
   "progressChecking": "Prüfe",
+  "progressRefining": "KI passt die Suche an...",
+  "progressAdvising": "KI analysiert Ergebnisse...",
   "progressFound": "Gefunden",
   "progressRemaining": "Geschätzt",
   "progressComplete": "Suche abgeschlossen",
+  "aiAdviceTitle": "KI-Analyse",
   "footer": "MIT Open Source",
   "seoExplanation": "SEO-Signale"
 }

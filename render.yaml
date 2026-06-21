@@ -17,7 +17,7 @@ services:
       - key: OpenRouter__Model
         value: openrouter/free
       - key: DemoRateLimit__LlmPerHour
-        value: "5"
+        value: "8"
       - key: DemoRateLimit__ChecksPerSession
         value: "25"
       - key: Porkbun__MinDelayMs

@@ -38,10 +38,14 @@
   "error": "Erro",
   "noResults": "Sem resultados. Tente outra descrição.",
   "progressGenerating": "Gerando nomes SEO...",
+  "progressPlanning": "IA planejando domínios a verificar...",
   "progressChecking": "Verificando",
+  "progressRefining": "IA ajustando a busca...",
+  "progressAdvising": "IA analisando resultados...",
   "progressFound": "Encontrados",
   "progressRemaining": "Tempo est.",
   "progressComplete": "Busca concluída",
+  "aiAdviceTitle": "Análise IA",
   "footer": "Código aberto MIT",
   "seoExplanation": "Sinais SEO"
 }

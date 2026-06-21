@@ -28,4 +28,5 @@ public sealed record DomainSearchResponseDto(
     IReadOnlyList<DomainCandidateDto> Candidates,
     string GeneratorUsed,
     IReadOnlyList<string> ExtractedKeywords,
-    string? Warning);
+    string? Warning,
+    string? Advice);

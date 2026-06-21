@@ -238,6 +238,32 @@ public class DomainSearchServiceTests
         Assert.Contains(events, e => e.Phase == "done");
     }
 
+    [Fact]
+    public void OrderTldsComFirst_PutsComFirst()
+    {
+        var ordered = DomainSearchService.OrderTldsComFirst(["io", "net", "com"]);
+        Assert.Equal("com", ordered[0]);
+        Assert.Equal("io", ordered[1]);
+    }
+
+    [Fact]
+    public void BuildCandidateQueue_PrefersComBeforeOtherTlds()
+    {
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            new FakeChecker());
+
+        var queue = service.BuildCandidateQueue(
+            ["pawtest", "dogtest"],
+            ["paw", "dog"],
+            "en",
+            ["io", "com"]);
+
+        Assert.Equal("com", queue[0].Tld);
+        Assert.Equal("com", queue[1].Tld);
+    }
+
     private sealed class FakeChecker(
         int availableAfter = int.MaxValue,
         bool credentialsMissing = false,

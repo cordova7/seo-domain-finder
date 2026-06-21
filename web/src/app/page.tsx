@@ -25,6 +25,7 @@ export default function HomePage() {
     keywords: string[];
     generator: string;
     warning: string | null;
+    advice: string | null;
   } | null>(null);
 
   const allTlds = [...new Set([...universalTlds, ...countryTlds])];
@@ -33,6 +34,8 @@ export default function HomePage() {
     if (!prompt.trim()) return;
     setLoading(true);
     setError(null);
+    setResults([]);
+    setMeta(null);
     setProgress({
       phase: "generating",
       checksUsed: 0,
@@ -50,13 +53,20 @@ export default function HomePage() {
           maxPriceUsd: maxPrice,
           useLlm: useAi,
         },
-        setProgress
+        setProgress,
+        (candidate) => {
+          setResults((prev) => {
+            if (prev.some((r) => r.fullDomain === candidate.fullDomain)) return prev;
+            return [...prev, candidate];
+          });
+        }
       );
       setResults(res.candidates);
       setMeta({
         keywords: res.extractedKeywords,
         generator: res.generatorUsed,
         warning: res.warning,
+        advice: res.advice,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : t.error);
@@ -145,7 +155,10 @@ export default function HomePage() {
             progress={progress}
             labels={{
               generating: t.progressGenerating,
+              planning: t.progressPlanning,
               checking: t.progressChecking,
+              refining: t.progressRefining,
+              advising: t.progressAdvising,
               found: t.progressFound,
               remaining: t.progressRemaining,
               complete: t.progressComplete,
@@ -174,6 +187,17 @@ export default function HomePage() {
               </p>
             )}
           </div>
+        )}
+
+        {meta?.advice && (
+          <section className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5 dark:border-blue-900 dark:bg-blue-950/40">
+            <h2 className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+              {t.aiAdviceTitle}
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-blue-800 dark:text-blue-100">
+              {meta.advice}
+            </p>
+          </section>
         )}
 
         {results.length > 0 && (

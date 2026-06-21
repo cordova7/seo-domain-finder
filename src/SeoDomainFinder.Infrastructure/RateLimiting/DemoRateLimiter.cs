@@ -15,19 +15,22 @@ public sealed class DemoRateLimiter
         _options = options;
     }
 
-    public bool TryConsumeLlm(string clientId, out int remaining)
+    public bool TryConsumeLlm(string clientId, out int remaining) =>
+        TryConsumeLlm(clientId, 1, out remaining);
+
+    public bool TryConsumeLlm(string clientId, int count, out int remaining)
     {
         var key = $"llm:{clientId}:{DateTime.UtcNow:yyyyMMddHH}";
-        var count = _cache.GetOrCreate(key, e =>
+        var used = _cache.GetOrCreate(key, e =>
         {
             e.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1);
             return 0;
         });
         var limit = _options.CurrentValue.LlmPerHour;
-        remaining = Math.Max(0, limit - count);
-        if (count >= limit) return false;
-        _cache.Set(key, count + 1, TimeSpan.FromHours(1));
-        remaining = Math.Max(0, limit - count - 1);
+        remaining = Math.Max(0, limit - used);
+        if (used + count > limit) return false;
+        _cache.Set(key, used + count, TimeSpan.FromHours(1));
+        remaining = Math.Max(0, limit - used - count);
         return true;
     }
 

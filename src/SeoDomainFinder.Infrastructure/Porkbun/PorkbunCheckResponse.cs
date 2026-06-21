@@ -28,4 +28,11 @@ public sealed class PorkbunCheckInnerResponse
     public string Avail { get; set; } = "";
     public string Price { get; set; } = "";
     public string Type { get; set; } = "";
+
+    [JsonPropertyName("premium")]
+    public string? Premium { get; set; }
+
+    public bool IsPremium =>
+        string.Equals(Premium, "yes", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Premium, "true", StringComparison.OrdinalIgnoreCase);
 }

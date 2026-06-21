@@ -19,7 +19,8 @@ public class PorkbunRateLimitTests
     [Fact]
     public void ParseRetryDelayMs_ReadsTtlFromReason()
     {
-        Assert.Equal(7000, PorkbunDomainChecker.ParseRetryDelayMs("rate_limited|ttl:7|message"));
+        Assert.Equal(10_000, PorkbunDomainChecker.ParseRetryDelayMs("rate_limited|ttl:7|message"));
+        Assert.Equal(12_000, PorkbunDomainChecker.ParseRetryDelayMs("rate_limited|ttl:12|message"));
         Assert.Equal(10_000, PorkbunDomainChecker.ParseRetryDelayMs(null));
     }
 }
