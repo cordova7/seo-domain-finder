@@ -1,3 +1,5 @@
+using SeoDomainFinder.Core.Models;
+
 namespace SeoDomainFinder.Core.Abstractions;
 
 public sealed record PlannedCheck(string Label, string Tld, int Score);
@@ -13,7 +15,9 @@ public sealed record CheckPlannerRequest(
     string? OpenRouterApiKey,
     IReadOnlyList<string>? TakenSample = null,
     int? RemainingChecks = null,
-    string? TakenPatternHint = null);
+    string? TakenPatternHint = null,
+    SearchBrief? Brief = null,
+    bool IsTopUp = false);
 
 public interface ICheckPlanner
 {

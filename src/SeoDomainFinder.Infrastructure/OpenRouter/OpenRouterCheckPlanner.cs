@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Core.Services;
 using SeoDomainFinder.Infrastructure.Options;
 
@@ -12,6 +13,8 @@ namespace SeoDomainFinder.Infrastructure.OpenRouter;
 
 public sealed class OpenRouterCheckPlanner : ICheckPlanner
 {
+    private const int InitialBriefBatchSize = 12;
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<OpenRouterOptions> _options;
     private readonly ILogger<OpenRouterCheckPlanner> _logger;
@@ -34,33 +37,105 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new InvalidOperationException("OpenRouter API key not configured");
 
-        var isRefill = request.TakenSample is { Count: > 0 };
-        var checkBudget = request.RemainingChecks ?? request.MaxChecks;
+        var isRefill = request.TakenSample is { Count: > 0 } && !request.IsTopUp;
+        var isTopUp = request.IsTopUp;
+        var hasBrief = request.Brief is not null;
 
-        var systemPrompt = isRefill
-            ? """
-              You replan domain availability checks after many names were taken.
-              Respond with a single JSON object: { "checks": [ { "label": "pawlynx", "tld": "com", "score": 88 } ] }
-              No explanation, no markdown, no text before or after the JSON.
-              Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
-              Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
-              Return exactly N checks in the checks array. Pick TLDs most likely free under the price cap.
-              """
-            : """
-              You plan which domains to availability-check for a business.
-              Respond with a single JSON object: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
-              No explanation, no markdown, no text before or after the JSON.
-              Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
-              Prefer coined/blended names over obvious keyword combos (likely taken on .com).
-              Usually pick .com for global/US businesses unless another TLD fits better.
-              Rank best first. Return exactly N checks in the checks array.
-              """;
+        var checkBudget = request.RemainingChecks
+            ?? (hasBrief && !isRefill && !isTopUp
+                ? Math.Min(InitialBriefBatchSize, request.MaxChecks)
+                : request.MaxChecks);
 
-        if (isRefill && !string.IsNullOrWhiteSpace(request.TakenPatternHint))
+        var systemPrompt = BuildSystemPrompt(isRefill, isTopUp, request.TakenPatternHint);
+
+        var userPrompt = hasBrief
+            ? BuildBriefUserPrompt(request, checkBudget)
+            : BuildLegacyUserPrompt(request, checkBudget);
+
+        var text = await CallChatAsync(apiKey, systemPrompt.Replace("N", checkBudget.ToString()), userPrompt, ct);
+        var filtered = FilterChecks(
+            ParseChecksRaw(text, request.Tlds, checkBudget),
+            request.Tlds,
+            checkBudget,
+            request.Brief,
+            request.Keywords);
+
+        if (filtered.Count < checkBudget && hasBrief)
+            _logger.LogDebug("Planner returned {Count}/{Budget} after quality filter", filtered.Count, checkBudget);
+
+        return filtered;
+    }
+
+    private static string BuildSystemPrompt(bool isRefill, bool isTopUp, string? takenPatternHint)
+    {
+        string systemPrompt;
+        if (isTopUp)
         {
-            systemPrompt += "\n" + request.TakenPatternHint;
+            systemPrompt = """
+                Generate MORE coined domain names different from the prior batch.
+                Respond with a single JSON object: { "checks": [ { "label": "brawlr", "tld": "io", "score": 88 } ] }
+                No explanation, no markdown, no text before or after the JSON.
+                Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
+                Prefer invented brand names. Never concatenate multiple keywords.
+                Return exactly N checks in the checks array.
+                """;
+        }
+        else if (isRefill)
+        {
+            systemPrompt = """
+                You replan domain availability checks after many names were taken.
+                Respond with a single JSON object: { "checks": [ { "label": "pawlynx", "tld": "com", "score": 88 } ] }
+                No explanation, no markdown, no text before or after the JSON.
+                Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
+                Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
+                Return exactly N checks in the checks array. Pick TLDs most likely free under the price cap.
+                """;
+        }
+        else
+        {
+            systemPrompt = """
+                You plan which domains to availability-check for a business.
+                Respond with a single JSON object: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
+                No explanation, no markdown, no text before or after the JSON.
+                Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
+                Prefer coined/blended names over obvious keyword combos (likely taken on .com).
+                Usually pick .com for global/US businesses unless another TLD fits better.
+                Rank best first. Return exactly N checks in the checks array.
+                """;
         }
 
+        if ((isRefill || isTopUp) && !string.IsNullOrWhiteSpace(takenPatternHint))
+            systemPrompt += "\n" + takenPatternHint;
+
+        return systemPrompt;
+    }
+
+    private static string BuildBriefUserPrompt(CheckPlannerRequest request, int checkBudget)
+    {
+        var brief = request.Brief!;
+        var tlds = string.Join(", ", request.Tlds.Select(t => $".{t}"));
+        var taken = request.TakenSample is { Count: > 0 }
+            ? string.Join(", ", request.TakenSample.Take(12))
+            : "none yet";
+
+        return $"""
+            Product: {brief.ProductSummary}
+            Audience: {brief.Audience}
+            Vibe: {string.Join(", ", brief.Vibe)}
+            Naming styles: {string.Join(", ", brief.NamingStyles)}
+            Concept keywords (evoke, do not concatenate): {string.Join(", ", brief.ConceptKeywords)}
+            NEVER use these terms: {string.Join(", ", brief.AvoidTerms)}
+            NEVER use these patterns: {string.Join(", ", brief.AvoidPatterns)}
+            TLD strategy: {brief.TldStrategy}
+            Allowed TLDs: {tlds}
+            Max price USD: {request.MaxPriceUsd:F0}
+            Check budget: {checkBudget}
+            Taken/unavailable so far: {taken}
+            """;
+    }
+
+    private static string BuildLegacyUserPrompt(CheckPlannerRequest request, int checkBudget)
+    {
         var seeds = string.Join(", ", request.SeedNames.Take(40));
         var keywords = string.Join(", ", request.Keywords);
         var tlds = string.Join(", ", request.Tlds.Select(t => $".{t}"));
@@ -68,7 +143,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             ? string.Join(", ", request.TakenSample.Take(12))
             : "none yet";
 
-        var userPrompt = $"""
+        return $"""
             Language: {request.Language}
             Business: {request.Prompt}
             Keywords: {keywords}
@@ -78,12 +153,17 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             Name seeds (ideas): {seeds}
             Taken/unavailable so far: {taken}
             """;
-
-        var text = await CallChatAsync(apiKey, systemPrompt.Replace("N", checkBudget.ToString()), userPrompt, ct);
-        return ParseChecks(text, request.Tlds, checkBudget);
     }
 
     internal static IReadOnlyList<PlannedCheck> ParseChecks(
+        string text,
+        IReadOnlyList<string> allowedTlds,
+        int maxChecks,
+        SearchBrief? brief = null,
+        IReadOnlyList<string>? keywords = null) =>
+        FilterChecks(ParseChecksRaw(text, allowedTlds, maxChecks), allowedTlds, maxChecks, brief, keywords);
+
+    private static List<PlannerCheck> ParseChecksRaw(
         string text,
         IReadOnlyList<string> allowedTlds,
         int maxChecks)
@@ -97,7 +177,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             {
                 var arr = JsonSerializer.Deserialize<List<PlannerCheck>>(arrayJson, JsonOptions);
                 if (arr is { Count: > 0 })
-                    return FilterChecks(arr, allowedTlds, maxChecks);
+                    return arr;
             }
             catch
             {
@@ -107,32 +187,33 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
 
         var objectJson = OpenRouterJsonHelper.ExtractJsonObject(text) ?? text;
 
-        PlannerResponse? parsed;
         try
         {
-            parsed = JsonSerializer.Deserialize<PlannerResponse>(objectJson, JsonOptions);
+            var parsed = JsonSerializer.Deserialize<PlannerResponse>(objectJson, JsonOptions);
+            if (parsed?.Checks is { Count: > 0 })
+                return parsed.Checks;
         }
         catch
         {
-            return [];
+            // fall through
         }
 
-        if (parsed?.Checks is null || parsed.Checks.Count == 0)
-            return [];
-
-        return FilterChecks(parsed.Checks, allowedTlds, maxChecks);
+        return [];
     }
 
-    private static List<PlannedCheck> FilterChecks(
+    internal static List<PlannedCheck> FilterChecks(
         List<PlannerCheck> items,
         IReadOnlyList<string> allowedTlds,
-        int maxChecks)
+        int maxChecks,
+        SearchBrief? brief,
+        IReadOnlyList<string>? keywords)
     {
         var allowed = new HashSet<string>(
             allowedTlds.Select(t => t.Trim().TrimStart('.').ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<PlannedCheck>();
+        var kw = keywords ?? [];
 
         foreach (var item in items)
         {
@@ -149,6 +230,9 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             }
 
             if (!NameSanitizer.IsValidDomainName(label) || !allowed.Contains(tld))
+                continue;
+
+            if (brief is not null && !DomainQualityFilter.IsAcceptable(label, brief, kw, useLlm: true))
                 continue;
 
             var key = $"{label}.{tld}";
@@ -201,7 +285,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         public List<PlannerCheck>? Checks { get; set; }
     }
 
-    private sealed class PlannerCheck
+    internal sealed class PlannerCheck
     {
         public string? Label { get; set; }
         public string? Domain { get; set; }

@@ -43,6 +43,36 @@ public class CheckPlannerParseTests
         Assert.Equal("fightmatch", checks[1].Label);
         Assert.DoesNotContain(checks, c => c.Tld == "net");
     }
+
+    [Fact]
+    public void ParseChecks_FiltersMashupsWhenBriefPresent()
+    {
+        var brief = new SeoDomainFinder.Core.Models.SearchBrief(
+            "Fighter matching app",
+            "fighters",
+            ["gritty"],
+            ["coined brands"],
+            ["hood", "street", "fight"],
+            ["tinder"],
+            ["keyword stacks"],
+            ".io for apps");
+
+        var json = """
+            {
+              "checks": [
+                { "label": "brawlr", "tld": "io", "score": 90 },
+                { "label": "tinderhoodstreet", "tld": "com", "score": 85 },
+                { "label": "tinderapp", "tld": "com", "score": 80 }
+              ]
+            }
+            """;
+
+        var checks = OpenRouterCheckPlanner.ParseChecks(
+            json, ["com", "io"], 25, brief, ["tinder", "hood", "street", "fighters"]);
+
+        Assert.Single(checks);
+        Assert.Equal("brawlr", checks[0].Label);
+    }
 }
 
 public class NameGeneratorParseTests

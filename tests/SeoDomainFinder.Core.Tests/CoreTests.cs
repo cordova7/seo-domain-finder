@@ -364,6 +364,167 @@ public class DomainSearchServiceTests
         Assert.Equal("com", queue[1].Tld);
     }
 
+    [Fact]
+    public void SearchBriefFallback_PutsTinderInAvoidTerms()
+    {
+        var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
+        var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en", keywords);
+
+        Assert.Contains(brief.AvoidTerms, t => t.Equals("tinder", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DomainQualityFilter_RejectsMashupsAndTrademarks()
+    {
+        var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en",
+            KeywordExtractor.Extract("tinder but for hood street fighters", "en"));
+        var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
+
+        Assert.False(DomainQualityFilter.IsAcceptable("tinderhoodstreet", brief, keywords, useLlm: true));
+        Assert.False(DomainQualityFilter.IsAcceptable("tinderapp", brief, keywords, useLlm: true));
+        Assert.True(DomainQualityFilter.IsAcceptable("brawlr", brief, keywords, useLlm: true));
+    }
+
+    [Fact]
+    public void BrandScorer_RanksCoinedAboveMashup()
+    {
+        var scorer = new SeoScorer();
+        var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en",
+            KeywordExtractor.Extract("tinder but for hood street fighters", "en"));
+        var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
+
+        var coined = scorer.Score("brawlr", keywords, "en", brief);
+        var mashup = scorer.Score("tinderhoodstreet", keywords, "en", brief);
+
+        Assert.True(coined.Score > mashup.Score);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_DoesNotPassHeuristicSeeds()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new CapturingFakePlanner([new PlannedCheck("brawlr", "io", 90)]);
+        var briefGen = new FakeBriefGenerator();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: briefGen);
+
+        await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "tinder but for hood street fighters",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.NotNull(planner.LastRequest);
+        Assert.Empty(planner.LastRequest!.SeedNames);
+        Assert.NotNull(planner.LastRequest.Brief);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_UsesBriefPlusPlannerGenerator()
+    {
+        var checker = new FakeChecker(availableAfter: 1);
+        var planner = new FakePlanner([new PlannedCheck("brawlr", "io", 90)]);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "tinder but for hood street fighters",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.Equal("brief+planner", result.GeneratorUsed);
+        Assert.Contains(result.Candidates, c => c.FullDomain == "brawlr.io");
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_TriggersTopUpWhenPlannerReturnsFew()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new TopUpFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            briefGenerator: new FakeBriefGenerator());
+
+        await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "tinder but for hood street fighters",
+            Language = "en",
+            Tlds = ["com", "io"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.True(planner.CallCount >= 2);
+        Assert.Contains(planner.Requests, r => r.IsTopUp);
+    }
+
+    private sealed class FakeBriefGenerator : IBriefGenerator
+    {
+        public Task<SearchBrief> GenerateAsync(BriefGeneratorRequest request, CancellationToken ct = default) =>
+            Task.FromResult(SearchBriefFallback.Create(
+                request.Prompt,
+                request.Language,
+                KeywordExtractor.Extract(request.Prompt, request.Language)));
+    }
+
+    private sealed class CapturingFakePlanner(IReadOnlyList<PlannedCheck> checks) : ICheckPlanner
+    {
+        public CheckPlannerRequest? LastRequest { get; private set; }
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            LastRequest = request;
+            return Task.FromResult(checks);
+        }
+    }
+
+    private sealed class TopUpFakePlanner : ICheckPlanner
+    {
+        private int _calls;
+        public int CallCount => _calls;
+        public List<CheckPlannerRequest> Requests { get; } = [];
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            _calls++;
+            Requests.Add(request);
+
+            if (request.IsTopUp)
+            {
+                return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                    Enumerable.Range(0, request.RemainingChecks ?? 10)
+                        .Select(i => new PlannedCheck($"topup{i}", "io", 75))
+                        .ToList());
+            }
+
+            return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                Enumerable.Range(0, 5)
+                    .Select(i => new PlannedCheck($"slot{i}", "com", 80))
+                    .ToList());
+        }
+    }
+
     private sealed class FakePlanner(IReadOnlyList<PlannedCheck> checks) : ICheckPlanner
     {
         public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default) =>

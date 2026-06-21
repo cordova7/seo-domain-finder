@@ -13,4 +13,5 @@ public sealed record SearchSummary(
     IReadOnlyList<string> SampleUnavailable,
     int UnavailableCount,
     int PremiumSkipped,
-    bool RefillTriggered);
+    bool RefillTriggered,
+    SearchBrief? Brief = null);

@@ -10,6 +10,7 @@ export type SearchProgressFoundCandidate = {
 export type SearchProgressEvent = {
   phase:
     | "generating"
+    | "briefing"
     | "planning"
     | "checking"
     | "found"

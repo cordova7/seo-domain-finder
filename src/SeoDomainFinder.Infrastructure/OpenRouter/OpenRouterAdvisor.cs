@@ -38,8 +38,17 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
             ? "none sampled"
             : string.Join(", ", summary.SampleUnavailable);
 
+        var briefContext = summary.Brief is null
+            ? ""
+            : $"""
+              Product summary: {summary.Brief.ProductSummary}
+              Avoid terms (trademark risk): {string.Join(", ", summary.Brief.AvoidTerms.Take(10))}
+              Naming styles: {string.Join(", ", summary.Brief.NamingStyles)}
+
+              """;
+
         var userPrompt = $"""
-            Business: {summary.Prompt}
+            {briefContext}Business: {summary.Prompt}
             Keywords: {string.Join(", ", summary.Keywords)}
             TLDs searched: {string.Join(", ", summary.Tlds.Select(t => $".{t}"))}
             Max price: ${summary.MaxPriceUsd:F0}
@@ -69,6 +78,7 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
                         You are a domain naming advisor. Be concise, specific, and grounded in the search data provided.
                         Only recommend TLDs from the user's searched list. Never suggest TLDs they did not check.
                         When zero domains were found, suggest retrying with alternate allowed TLDs or more invented brand labels.
+                        Warn about trademark risk if found domains contain terms from the avoid list.
                         """
                 },
                 new { role = "user", content = userPrompt }

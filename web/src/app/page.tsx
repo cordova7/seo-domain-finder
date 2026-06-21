@@ -155,6 +155,7 @@ export default function HomePage() {
             progress={progress}
             labels={{
               generating: t.progressGenerating,
+              briefing: t.progressBriefing,
               planning: t.progressPlanning,
               checking: t.progressChecking,
               refining: t.progressRefining,

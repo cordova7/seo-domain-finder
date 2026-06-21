@@ -38,6 +38,7 @@
   "error": "Error",
   "noResults": "Sin resultados. Prueba otra descripción.",
   "progressGenerating": "Generando nombres SEO...",
+  "progressBriefing": "IA comprendiendo tu negocio (modelos gratuitos pueden tardar 1–2 min)...",
   "progressPlanning": "IA planificando dominios a verificar (modelos gratuitos pueden tardar 1–2 min)...",
   "progressChecking": "Verificando",
   "progressRefining": "IA ajustando la búsqueda...",

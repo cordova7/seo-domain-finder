@@ -7,6 +7,7 @@ type Props = {
   progress: SearchProgressEvent;
   labels: {
     generating: string;
+    briefing: string;
     planning: string;
     checking: string;
     refining: string;
@@ -26,7 +27,7 @@ function formatEta(seconds: number): string {
 }
 
 function percentFor(progress: SearchProgressEvent): number {
-  if (progress.phase === "generating" || progress.phase === "planning") return 8;
+  if (progress.phase === "generating" || progress.phase === "briefing" || progress.phase === "planning") return 8;
   if (progress.phase === "refining" || progress.phase === "advising") return 95;
   if (progress.phase === "done") return 100;
   if (progress.maxChecks <= 0) return 0;
@@ -53,7 +54,8 @@ export function SearchProgress({ progress, labels }: Props) {
   const eta = countdown != null ? formatEta(countdown) : "";
 
   let status = labels.generating;
-  if (progress.phase === "planning") status = labels.planning;
+  if (progress.phase === "briefing") status = labels.briefing;
+  else if (progress.phase === "planning") status = labels.planning;
   else if (progress.phase === "refining") status = labels.refining;
   else if (progress.phase === "advising") status = labels.advising;
   else if (progress.phase === "checking" || progress.phase === "found") {
@@ -91,7 +93,7 @@ export function SearchProgress({ progress, labels }: Props) {
             )}
           </>
         )}
-        {(progress.phase === "generating" || progress.phase === "planning") && (
+        {(progress.phase === "generating" || progress.phase === "briefing" || progress.phase === "planning") && (
           <span className="animate-pulse">{status}</span>
         )}
       </div>

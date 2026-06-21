@@ -14,19 +14,22 @@ public sealed class DomainSearchService : IDomainSearchService
     private readonly IDomainAvailabilityChecker _availabilityChecker;
     private readonly ICheckPlanner? _checkPlanner;
     private readonly IDomainAdvisor? _domainAdvisor;
+    private readonly IBriefGenerator? _briefGenerator;
 
     public DomainSearchService(
         IEnumerable<INameGenerator> generators,
         ISeoScorer seoScorer,
         IDomainAvailabilityChecker availabilityChecker,
         ICheckPlanner? checkPlanner = null,
-        IDomainAdvisor? domainAdvisor = null)
+        IDomainAdvisor? domainAdvisor = null,
+        IBriefGenerator? briefGenerator = null)
     {
         _generators = generators;
         _seoScorer = seoScorer;
         _availabilityChecker = availabilityChecker;
         _checkPlanner = checkPlanner;
         _domainAdvisor = domainAdvisor;
+        _briefGenerator = briefGenerator;
     }
 
     public async Task<DomainSearchResult> SearchAsync(
@@ -42,8 +45,27 @@ public sealed class DomainSearchService : IDomainSearchService
         string? warning = null;
         var maxChecks = Math.Max(10, request.MaxChecks);
         var target = request.MaxCandidates;
+        var useBriefPath = request.UseLlm && _briefGenerator is not null && _checkPlanner is not null;
 
-        Report(progress, "generating", 0, maxChecks, 0, null);
+        SearchBrief? brief = null;
+        if (useBriefPath)
+        {
+            Report(progress, "briefing", 0, maxChecks, 0, null);
+            try
+            {
+                brief = await _briefGenerator!.GenerateAsync(new BriefGeneratorRequest(
+                    request.Prompt, lang, tlds, request.OpenRouterApiKey), ct);
+            }
+            catch (Exception ex)
+            {
+                brief = SearchBriefFallback.Create(request.Prompt, lang, keywords);
+                warning = AppendWarning(warning, $"AI brief failed, using fallback: {ex.Message}");
+            }
+        }
+        else
+        {
+            Report(progress, "generating", 0, maxChecks, 0, null);
+        }
 
         var genRequest = new DomainSearchRequest
         {
@@ -59,12 +81,14 @@ public sealed class DomainSearchService : IDomainSearchService
             MaxChecks = request.MaxChecks
         };
 
-        var nameGen = await GenerateNamesAsync(request, genRequest, ct);
+        var nameGen = useBriefPath
+            ? new NameGenResult([], "brief", warning)
+            : await GenerateNamesAsync(request, genRequest, ct);
         generatorUsed = nameGen.GeneratorUsed;
-        warning = nameGen.Warning;
+        warning = nameGen.Warning ?? warning;
 
         var queueResult = await BuildQueueAsync(
-            progress, request, nameGen.Names, keywords, lang, tlds, maxChecks, generatorUsed, warning, ct);
+            progress, request, nameGen.Names, keywords, lang, tlds, maxChecks, generatorUsed, warning, brief, ct);
         var queue = queueResult.Queue;
         generatorUsed = queueResult.GeneratorUsed;
         warning = queueResult.Warning;
@@ -109,8 +133,8 @@ public sealed class DomainSearchService : IDomainSearchService
             {
                 premiumSkipped++;
                 ApplyRefillOutcome(await TryRefillAsync(
-                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                    refillTriggered, available, checksUsed, progress, ct),
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, brief, ct),
                     ref refillTriggered, ref warning);
                 continue;
             }
@@ -121,8 +145,8 @@ public sealed class DomainSearchService : IDomainSearchService
                 if (unavailableSample.Count < 12)
                     unavailableSample.Add(candidate.FullDomain);
                 ApplyRefillOutcome(await TryRefillAsync(
-                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                    refillTriggered, available, checksUsed, progress, ct),
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, brief, ct),
                     ref refillTriggered, ref warning);
                 continue;
             }
@@ -136,8 +160,8 @@ public sealed class DomainSearchService : IDomainSearchService
                 if (unavailableSample.Count < 12)
                     unavailableSample.Add(candidate.FullDomain);
                 ApplyRefillOutcome(await TryRefillAsync(
-                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                    refillTriggered, available, checksUsed, progress, ct),
+                    request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, brief, ct),
                     ref refillTriggered, ref warning);
                 continue;
             }
@@ -151,8 +175,8 @@ public sealed class DomainSearchService : IDomainSearchService
             ReportFound(progress, checksUsed, maxChecks, available.Count, candidate);
 
             ApplyRefillOutcome(await TryRefillAsync(
-                request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
-                refillTriggered, available, checksUsed, progress, ct),
+                request, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                refillTriggered, available, checksUsed, progress, brief, ct),
                 ref refillTriggered, ref warning);
         }
 
@@ -177,7 +201,8 @@ public sealed class DomainSearchService : IDomainSearchService
             unavailableSample,
             unavailableCount,
             premiumSkipped,
-            refillTriggered);
+            refillTriggered,
+            brief);
 
         string? advice = null;
         if (request.UseLlm && _domainAdvisor is not null)
@@ -266,6 +291,7 @@ public sealed class DomainSearchService : IDomainSearchService
         int maxChecks,
         string generatorUsed,
         string? warning,
+        SearchBrief? brief,
         CancellationToken ct)
     {
         if (request.UseLlm && _checkPlanner is not null)
@@ -273,6 +299,7 @@ public sealed class DomainSearchService : IDomainSearchService
             try
             {
                 Report(progress, "planning", 0, maxChecks, 0, null);
+                var seeds = brief is not null ? [] : rawNames.ToList();
                 var planned = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
                     request.Prompt,
                     lang,
@@ -280,36 +307,101 @@ public sealed class DomainSearchService : IDomainSearchService
                     tlds,
                     maxChecks,
                     request.MaxPriceUsd,
-                    rawNames.ToList(),
-                    request.OpenRouterApiKey), ct);
+                    seeds,
+                    request.OpenRouterApiKey,
+                    Brief: brief), ct);
 
                 if (planned.Count > 0)
                 {
-                    var used = generatorUsed is "hybrid" or "heuristic"
-                        ? $"{generatorUsed}+planner"
-                        : "planner";
-                    var queue = PlannedToCandidates(planned, keywords, lang);
-                    BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
+                    var queue = PlannedToCandidates(planned, keywords, lang, brief);
+
+                    if (brief is not null && queue.Count < maxChecks)
+                        await TopUpPlannerAsync(
+                            request, keywords, lang, tlds, maxChecks, queue, brief, warning, ct);
+                    else if (brief is null)
+                        BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
+
+                    var used = brief is not null
+                        ? "brief+planner"
+                        : generatorUsed is "hybrid" or "heuristic"
+                            ? $"{generatorUsed}+planner"
+                            : "planner";
                     return new QueueBuildResult(queue, used, warning);
                 }
 
                 warning = AppendWarning(warning,
-                    "AI planner returned no valid domains; using heuristic queue.");
+                    brief is not null
+                        ? "AI planner returned no valid domains."
+                        : "AI planner returned no valid domains; using heuristic queue.");
             }
             catch (Exception ex)
             {
-                warning = AppendWarning(warning, $"AI planner failed, using heuristic queue: {ex.Message}");
+                warning = AppendWarning(warning,
+                    brief is not null
+                        ? $"AI planner failed: {ex.Message}"
+                        : $"AI planner failed, using heuristic queue: {ex.Message}");
             }
+
+            if (brief is not null)
+                return new QueueBuildResult([], generatorUsed, warning);
         }
 
         return new QueueBuildResult(
             BuildCandidateQueue(rawNames, keywords, lang, tlds), generatorUsed, warning);
     }
 
+    private async Task TopUpPlannerAsync(
+        DomainSearchRequest request,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        List<DomainCandidate> queue,
+        SearchBrief brief,
+        string? warning,
+        CancellationToken ct)
+    {
+        if (_checkPlanner is null || queue.Count >= maxChecks)
+            return;
+
+        try
+        {
+            var taken = queue.Select(c => c.FullDomain).ToList();
+            var remaining = maxChecks - queue.Count;
+            var topUp = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
+                request.Prompt,
+                lang,
+                keywords,
+                tlds,
+                maxChecks,
+                request.MaxPriceUsd,
+                [],
+                request.OpenRouterApiKey,
+                taken,
+                remaining,
+                Brief: brief,
+                IsTopUp: true), ct);
+
+            var seen = new HashSet<string>(queue.Select(c => c.FullDomain), StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in PlannedToCandidates(topUp, keywords, lang, brief))
+            {
+                if (queue.Count >= maxChecks)
+                    break;
+                if (seen.Add(candidate.FullDomain))
+                    queue.Add(candidate);
+            }
+        }
+        catch
+        {
+            // Leave queue short rather than inject heuristics.
+        }
+    }
+
     private List<DomainCandidate> PlannedToCandidates(
         IReadOnlyList<PlannedCheck> planned,
         IReadOnlyList<string> keywords,
-        string lang)
+        string lang,
+        SearchBrief? brief = null)
     {
         var list = new List<DomainCandidate>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -319,16 +411,27 @@ public sealed class DomainSearchService : IDomainSearchService
             if (!NameSanitizer.IsValidDomainName(item.Label))
                 continue;
 
+            if (brief is not null &&
+                !DomainQualityFilter.IsAcceptable(item.Label, brief, keywords, useLlm: true))
+                continue;
+
             var key = $"{item.Label}.{item.Tld}";
             if (!seen.Add(key))
                 continue;
 
-            var seo = _seoScorer.Score(item.Label, keywords, lang);
+            var seo = brief is not null
+                ? _seoScorer.Score(item.Label, keywords, lang, brief)
+                : _seoScorer.Score(item.Label, keywords, lang);
+
+            var seoScore = brief is not null
+                ? seo.Score
+                : Math.Max(seo.Score, item.Score);
+
             list.Add(new DomainCandidate
             {
                 Name = item.Label,
                 Tld = item.Tld,
-                SeoScore = Math.Max(seo.Score, item.Score),
+                SeoScore = seoScore,
                 SeoExplanation = seo.Explanation
             });
         }
@@ -359,7 +462,6 @@ public sealed class DomainSearchService : IDomainSearchService
 
     private async Task<RefillOutcome?> TryRefillAsync(
         DomainSearchRequest request,
-        NameGenResult nameGen,
         IReadOnlyList<string> keywords,
         string lang,
         IReadOnlyList<string> tlds,
@@ -370,6 +472,7 @@ public sealed class DomainSearchService : IDomainSearchService
         List<DomainCandidate> available,
         int checksUsed,
         IProgress<SearchProgressEvent>? progress,
+        SearchBrief? brief,
         CancellationToken ct)
     {
         if (refillTriggered ||
@@ -397,13 +500,14 @@ public sealed class DomainSearchService : IDomainSearchService
                 tlds,
                 maxChecks,
                 request.MaxPriceUsd,
-                nameGen.Names.ToList(),
+                [],
                 request.OpenRouterApiKey,
                 unavailableSample.ToList(),
                 maxChecks - checksUsed,
-                DeriveTakenPatternHint(unavailableSample)), ct);
+                DeriveTakenPatternHint(unavailableSample),
+                brief), ct);
 
-            foreach (var candidate in PlannedToCandidates(refill, keywords, lang))
+            foreach (var candidate in PlannedToCandidates(refill, keywords, lang, brief))
             {
                 if (alreadyChecked.Add(candidate.FullDomain))
                     queue.Add(candidate);
