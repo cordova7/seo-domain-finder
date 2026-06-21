@@ -1,0 +1,26 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+appsettings.Development.json
+
+# Node
+web/node_modules/
+web/.next/
+web/out/
+
+# Env
+.env
+.env.local
+.env*.local
+web/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp

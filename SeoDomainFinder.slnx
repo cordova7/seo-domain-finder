@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SeoDomainFinder.Api/SeoDomainFinder.Api.csproj" />
+    <Project Path="src/SeoDomainFinder.Core/SeoDomainFinder.Core.csproj" />
+    <Project Path="src/SeoDomainFinder.Infrastructure/SeoDomainFinder.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SeoDomainFinder.Core.Tests/SeoDomainFinder.Core.Tests.csproj" />
+  </Folder>
+</Solution>

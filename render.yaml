@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: seo-domain-finder-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Porkbun__ApiKey
+        sync: false
+      - key: Porkbun__SecretKey
+        sync: false
+      - key: OpenRouter__ApiKey
+        sync: false
+      - key: OpenRouter__Model
+        value: openrouter/free
+      - key: DemoRateLimit__LlmPerHour
+        value: "5"
+      - key: DemoRateLimit__ChecksPerSession
+        value: "30"
+      - key: Cors__AllowedOrigins
+        sync: false
