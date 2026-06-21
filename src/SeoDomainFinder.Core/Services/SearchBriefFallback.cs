@@ -22,10 +22,7 @@ public static partial class SearchBriefFallback
         "coined 6-9 char brands", "portmanteaus", "abstract verbs"
     ];
 
-    private static readonly string[] AbstractConceptKeywords =
-    [
-        "matchup", "community", "brand", "venture"
-    ];
+  private static readonly string[] DefaultVibe = ["memorable", "distinctive"];
 
     public static SearchBrief Create(string prompt, string lang, IReadOnlyList<string> keywords)
     {
@@ -33,12 +30,21 @@ public static partial class SearchBriefFallback
         foreach (var term in DetectMetaphorSources(prompt))
             avoidTerms.Add(term);
 
+        var conceptKeywords = keywords
+            .Where(k => k.Length >= 3 && !avoidTerms.Contains(k))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        if (conceptKeywords.Count == 0)
+            conceptKeywords = ["venture", "brand"];
+
         return new SearchBrief(
             ProductSummary: BuildProductSummary(prompt),
             Audience: "target customers for this business",
-            Vibe: ["professional", "memorable"],
+            Vibe: DefaultVibe,
             NamingStyles: DefaultNamingStyles,
-            ConceptKeywords: AbstractConceptKeywords.ToList(),
+            ConceptKeywords: conceptKeywords,
             AvoidTerms: avoidTerms.ToList(),
             AvoidPatterns: DefaultAvoidPatterns,
             TldStrategy: "prefer .com for main brand, .io for apps");

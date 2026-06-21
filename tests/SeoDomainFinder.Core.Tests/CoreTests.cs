@@ -374,13 +374,14 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
-    public void SearchBriefFallback_UsesAbstractConceptKeywordsNotRawPrompt()
+    public void SearchBriefFallback_PreservesNicheKeywordsInConcept()
     {
         var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
         var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en", keywords);
 
-        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("hood", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("street", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(brief.ConceptKeywords, k => k.Equals("hood", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(brief.ConceptKeywords, k => k.Equals("street", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("tinder", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("A business concept", brief.ProductSummary, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -465,7 +466,7 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
-    public async Task Search_WithBrief_TriggersTopUpWhenPlannerReturnsFew()
+    public async Task Search_WithBrief_SinglePlannerCallNoTopUp()
     {
         var checker = new FakeChecker(availableAfter: int.MaxValue);
         var planner = new TopUpFakePlanner();
@@ -486,8 +487,41 @@ public class DomainSearchServiceTests
             MaxChecks = 25
         });
 
-        Assert.True(planner.CallCount >= 2);
-        Assert.Contains(planner.Requests, r => r.IsTopUp);
+        Assert.Equal(1, planner.CallCount);
+        Assert.DoesNotContain(planner.Requests, r => r.IsTopUp);
+    }
+
+    [Fact]
+    public async Task Search_WithBrief_SkipsLlmAdvisorWhenFewResults()
+    {
+        var checker = new FirstAvailableChecker();
+        var planner = new FakePlanner(
+            Enumerable.Range(0, 25)
+                .Select(i => new PlannedCheck($"brawlx{(char)('a' + i)}", "com", 80))
+                .ToList());
+        var advisor = new CapturingFakeAdvisor();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner,
+            advisor,
+            briefGenerator: new FakeBriefGenerator());
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "tinder but for hood street fighters",
+            Language = "en",
+            Tlds = ["com"],
+            UseLlm = true,
+            MaxCandidates = 5,
+            MaxChecks = 25
+        });
+
+        Assert.False(advisor.WasCalled);
+        Assert.NotNull(result.Advice);
+        Assert.Contains("Only one option found", result.Advice);
+        Assert.Single(result.Candidates);
     }
 
     private sealed class FakeBriefGenerator : IBriefGenerator
@@ -542,6 +576,17 @@ public class DomainSearchServiceTests
             Task.FromResult(checks);
     }
 
+    private sealed class CapturingFakeAdvisor : IDomainAdvisor
+    {
+        public bool WasCalled { get; private set; }
+
+        public Task<string?> AdviseAsync(SearchSummary summary, string? openRouterApiKey, CancellationToken ct = default)
+        {
+            WasCalled = true;
+            return Task.FromResult<string?>("llm advice");
+        }
+    }
+
     private sealed class RefillingFakePlanner : ICheckPlanner
     {
         private int _calls;
@@ -563,6 +608,24 @@ public class DomainSearchServiceTests
                 Enumerable.Range(0, remaining)
                     .Select(i => new PlannedCheck($"refill{i}", "io", 75))
                     .ToList());
+        }
+    }
+
+    private sealed class FirstAvailableChecker : IDomainAvailabilityChecker
+    {
+        private bool _found;
+
+        public Task<DomainCheckResult> CheckAsync(string fullDomain, CancellationToken ct = default)
+        {
+            if (_found)
+            {
+                return Task.FromResult(new DomainCheckResult(
+                    fullDomain, false, null, null, DomainCheckReasons.Unavailable));
+            }
+
+            _found = true;
+            return Task.FromResult(new DomainCheckResult(
+                fullDomain, true, 11.08m, "standard", null));
         }
     }
 

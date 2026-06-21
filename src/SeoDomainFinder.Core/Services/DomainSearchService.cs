@@ -6,7 +6,6 @@ namespace SeoDomainFinder.Core.Services;
 public sealed class DomainSearchService : IDomainSearchService
 {
     private const int RefillCheckThreshold = 15;
-    private const int RefillMinFound = 3;
     private const int RefillMinRemaining = 5;
 
     private readonly IEnumerable<INameGenerator> _generators;
@@ -207,14 +206,21 @@ public sealed class DomainSearchService : IDomainSearchService
         string? advice = null;
         if (request.UseLlm && _domainAdvisor is not null)
         {
-            Report(progress, "advising", checksUsed, maxChecks, ranked.Count, null);
-            try
+            if (ranked.Count >= 2)
             {
-                advice = await _domainAdvisor.AdviseAsync(summary, request.OpenRouterApiKey, ct);
+                Report(progress, "advising", checksUsed, maxChecks, ranked.Count, null);
+                try
+                {
+                    advice = await _domainAdvisor.AdviseAsync(summary, request.OpenRouterApiKey, ct);
+                }
+                catch (Exception ex)
+                {
+                    warning = AppendWarning(warning, $"AI advice failed: {ex.Message}");
+                }
             }
-            catch (Exception ex)
+            else
             {
-                warning = AppendWarning(warning, $"AI advice failed: {ex.Message}");
+                advice = BuildShortAdvice(ranked, checksUsed, maxChecks, unavailableCount);
             }
         }
 
@@ -315,16 +321,8 @@ public sealed class DomainSearchService : IDomainSearchService
 
                 if (brief is not null)
                 {
-                    warning = AppendWarning(warning, "AI planner returned no valid domains; retrying without brief filter.");
-                    queue = await TryBuildPlannerQueueAsync(
-                        request, rawNames, keywords, lang, tlds, maxChecks, brief: null, ct);
-
-                    if (queue.Count > 0)
-                    {
-                        return new QueueBuildResult(queue, "brief+planner", warning);
-                    }
-
-                    warning = AppendWarning(warning, "AI planning produced no domains; checking heuristic names.");
+                    warning = AppendWarning(warning,
+                        "AI planner returned no valid domains; checking heuristic names.");
                 }
                 else
                 {
@@ -372,58 +370,28 @@ public sealed class DomainSearchService : IDomainSearchService
 
         var queue = PlannedToCandidates(planned, keywords, lang, brief);
 
-        if (brief is not null && queue.Count < maxChecks)
-            await TopUpPlannerAsync(request, keywords, lang, tlds, maxChecks, queue, brief, ct);
-        else if (brief is null)
+        if (brief is null)
             BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
 
         return queue;
     }
 
-    private async Task TopUpPlannerAsync(
-        DomainSearchRequest request,
-        IReadOnlyList<string> keywords,
-        string lang,
-        IReadOnlyList<string> tlds,
+    private static string BuildShortAdvice(
+        IReadOnlyList<DomainCandidate> ranked,
+        int checksUsed,
         int maxChecks,
-        List<DomainCandidate> queue,
-        SearchBrief brief,
-        CancellationToken ct)
+        int unavailableCount)
     {
-        if (_checkPlanner is null || queue.Count >= maxChecks)
-            return;
-
-        try
+        if (ranked.Count == 0)
         {
-            var taken = queue.Select(c => c.FullDomain).ToList();
-            var remaining = maxChecks - queue.Count;
-            var topUp = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
-                request.Prompt,
-                lang,
-                keywords,
-                tlds,
-                maxChecks,
-                request.MaxPriceUsd,
-                [],
-                request.OpenRouterApiKey,
-                taken,
-                remaining,
-                Brief: brief,
-                IsTopUp: true), ct);
+            return $"No available domains after {checksUsed} of {maxChecks} checks " +
+                   $"({unavailableCount} taken or over budget). Try more TLDs or run another search.";
+        }
 
-            var seen = new HashSet<string>(queue.Select(c => c.FullDomain), StringComparer.OrdinalIgnoreCase);
-            foreach (var candidate in PlannedToCandidates(topUp, keywords, lang, brief))
-            {
-                if (queue.Count >= maxChecks)
-                    break;
-                if (seen.Add(candidate.FullDomain))
-                    queue.Add(candidate);
-            }
-        }
-        catch
-        {
-            // Leave queue short rather than inject heuristics.
-        }
+        var top = ranked[0];
+        var price = top.PriceUsd is { } p ? $" at ${p:F2}" : "";
+        return $"Only one option found: {top.FullDomain}{price}. " +
+               $"Checked {checksUsed}/{maxChecks} names — most were taken. Try more TLDs or search again for more coinages.";
     }
 
     private List<DomainCandidate> PlannedToCandidates(
@@ -508,7 +476,7 @@ public sealed class DomainSearchService : IDomainSearchService
             !request.UseLlm ||
             _checkPlanner is null ||
             checksUsed < RefillCheckThreshold ||
-            available.Count >= RefillMinFound ||
+            available.Count > 0 ||
             maxChecks - checksUsed < RefillMinRemaining)
         {
             return null;

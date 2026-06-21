@@ -54,7 +54,10 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
                   "tldStrategy": "when to use each allowed TLD"
                 }
                 No explanation, no markdown, no text before or after the JSON.
-                If the prompt references another product as metaphor (e.g. "X but for Y"), put X in avoidTerms.
+                If the prompt references another product as metaphor (e.g. "X but for Y"), put X in avoidTerms only.
+                Capture the interaction model (matching, discovery, swiping, booking) in productSummary and conceptKeywords — not the trademark.
+                Do not genericize: preserve subculture, scene, tone, and niche vocabulary in vibe and conceptKeywords.
+                conceptKeywords must use words from the user's intent (e.g. hood, street, spar) — not sanitized startup jargon.
                 Prefer invented brand names over literal keyword combinations.
                 Keep the JSON compact.
                 """;

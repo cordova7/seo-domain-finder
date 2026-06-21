@@ -14,7 +14,6 @@ namespace SeoDomainFinder.Infrastructure.OpenRouter;
 public sealed class OpenRouterCheckPlanner : ICheckPlanner
 {
     internal const string CheckCountPlaceholder = "{CHECK_COUNT}";
-    private const int InitialBriefBatchSize = 12;
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<OpenRouterOptions> _options;
@@ -42,10 +41,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
         var isTopUp = request.IsTopUp;
         var hasBrief = request.Brief is not null;
 
-        var checkBudget = request.RemainingChecks
-            ?? (hasBrief && !isRefill && !isTopUp
-                ? Math.Min(InitialBriefBatchSize, request.MaxChecks)
-                : request.MaxChecks);
+        var checkBudget = request.RemainingChecks ?? request.MaxChecks;
 
         var systemPrompt = ApplyCheckCountPlaceholder(
             BuildSystemPrompt(isRefill, isTopUp, request.TakenPatternHint),
@@ -123,9 +119,10 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 Respond with a single JSON object: { "checks": [ { "label": "dogdrift", "tld": "com", "score": 92 } ] }
                 No explanation, no markdown, no text before or after the JSON.
                 Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
-                Prefer coined/blended names over obvious keyword combos (likely taken on .com).
-                Usually pick .com for global/US businesses unless another TLD fits better.
-                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
+                Assume most obvious .com dictionary and fight/shop/app-style names are already registered.
+                At least half the labels should be opaque 6-8 char coinages without literal fight/battle/clash/punch morphemes.
+                Prefer coined/blended names over obvious keyword combos. Spread across allowed TLDs per the brief.
+                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 15 if possible).
                 """;
         }
 
@@ -144,6 +141,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             : "none yet";
 
         return $"""
+            Original user prompt: {request.Prompt}
             Product: {brief.ProductSummary}
             Audience: {brief.Audience}
             Vibe: {string.Join(", ", brief.Vibe)}
