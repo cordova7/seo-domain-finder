@@ -2,12 +2,12 @@
 
 Generate **SEO-optimized domain names** from a business description, score them, and check **availability + price** via [Porkbun](https://porkbun.com). Works **without API keys** (heuristic engine). Optional AI enhancement via [OpenRouter free models](https://openrouter.ai/openrouter/free).
 
-[![CI](https://github.com/YOUR_USERNAME/seo-domain-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/seo-domain-finder/actions/workflows/ci.yml)
+[![CI](https://github.com/cordova7/seo-domain-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/cordova7/seo-domain-finder/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Live demo
 
-- **Frontend:** Vercel → `https://your-app.vercel.app`
+- **Frontend:** Vercel → `https://seo-domain-finder.vercel.app`
 - **API:** Render (Docker, free tier) → `https://seo-domain-finder-api.onrender.com`
 
 > Free Render tier sleeps after 15 min inactivity. First request may take ~30–60s.
@@ -26,16 +26,6 @@ Generate **SEO-optimized domain names** from a business description, score them,
                                     │ OpenRouter (opt.) │
                                     └───────────────────┘
 ```
-
-### SOLID highlights
-
-| Principle | Implementation |
-|-----------|----------------|
-| **S** | `HeuristicNameGenerator`, `OpenRouterNameGenerator`, `PorkbunDomainChecker` — single responsibility |
-| **O** | New generators implement `INameGenerator` |
-| **L** | All generators interchangeable |
-| **I** | `ISeoScorer`, `IDomainAvailabilityChecker`, `IDomainSearchService` |
-| **D** | API depends on abstractions in `Core` |
 
 ## Features
 
