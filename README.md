@@ -7,7 +7,7 @@ Generate **SEO-optimized domain names** from a business description, score them,
 
 ## Live demo
 
-- **Frontend:** Vercel → `https://your-app.vercel.app`
+- **Frontend:** Vercel → `https://seo-domain-finder.vercel.app`
 - **API:** Render (Docker, free tier) → `https://seo-domain-finder-api.onrender.com`
 
 > Free Render tier sleeps after 15 min inactivity. First request may take ~30–60s.
