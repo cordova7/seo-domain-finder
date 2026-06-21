@@ -299,28 +299,12 @@ public sealed class DomainSearchService : IDomainSearchService
             try
             {
                 Report(progress, "planning", 0, maxChecks, 0, null);
-                var seeds = brief is not null ? [] : rawNames.ToList();
-                var planned = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
-                    request.Prompt,
-                    lang,
-                    keywords,
-                    tlds,
-                    maxChecks,
-                    request.MaxPriceUsd,
-                    seeds,
-                    request.OpenRouterApiKey,
-                    Brief: brief), ct);
 
-                if (planned.Count > 0)
+                var queue = await TryBuildPlannerQueueAsync(
+                    request, rawNames, keywords, lang, tlds, maxChecks, brief, ct);
+
+                if (queue.Count > 0)
                 {
-                    var queue = PlannedToCandidates(planned, keywords, lang, brief);
-
-                    if (brief is not null && queue.Count < maxChecks)
-                        await TopUpPlannerAsync(
-                            request, keywords, lang, tlds, maxChecks, queue, brief, warning, ct);
-                    else if (brief is null)
-                        BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
-
                     var used = brief is not null
                         ? "brief+planner"
                         : generatorUsed is "hybrid" or "heuristic"
@@ -329,25 +313,71 @@ public sealed class DomainSearchService : IDomainSearchService
                     return new QueueBuildResult(queue, used, warning);
                 }
 
-                warning = AppendWarning(warning,
-                    brief is not null
-                        ? "AI planner returned no valid domains."
-                        : "AI planner returned no valid domains; using heuristic queue.");
+                if (brief is not null)
+                {
+                    warning = AppendWarning(warning, "AI planner returned no valid domains; retrying without brief filter.");
+                    queue = await TryBuildPlannerQueueAsync(
+                        request, rawNames, keywords, lang, tlds, maxChecks, brief: null, ct);
+
+                    if (queue.Count > 0)
+                    {
+                        return new QueueBuildResult(queue, "brief+planner", warning);
+                    }
+
+                    warning = AppendWarning(warning, "AI planning produced no domains; checking heuristic names.");
+                }
+                else
+                {
+                    warning = AppendWarning(warning,
+                        "AI planner returned no valid domains; using heuristic queue.");
+                }
             }
             catch (Exception ex)
             {
                 warning = AppendWarning(warning,
                     brief is not null
-                        ? $"AI planner failed: {ex.Message}"
+                        ? $"AI planner failed: {ex.Message}; checking heuristic names."
                         : $"AI planner failed, using heuristic queue: {ex.Message}");
             }
-
-            if (brief is not null)
-                return new QueueBuildResult([], generatorUsed, warning);
         }
 
         return new QueueBuildResult(
             BuildCandidateQueue(rawNames, keywords, lang, tlds), generatorUsed, warning);
+    }
+
+    private async Task<List<DomainCandidate>> TryBuildPlannerQueueAsync(
+        DomainSearchRequest request,
+        IReadOnlyList<string> rawNames,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        SearchBrief? brief,
+        CancellationToken ct)
+    {
+        var seeds = brief is not null ? [] : rawNames.ToList();
+        var planned = await _checkPlanner!.PlanAsync(new CheckPlannerRequest(
+            request.Prompt,
+            lang,
+            keywords,
+            tlds,
+            maxChecks,
+            request.MaxPriceUsd,
+            seeds,
+            request.OpenRouterApiKey,
+            Brief: brief), ct);
+
+        if (planned.Count == 0)
+            return [];
+
+        var queue = PlannedToCandidates(planned, keywords, lang, brief);
+
+        if (brief is not null && queue.Count < maxChecks)
+            await TopUpPlannerAsync(request, keywords, lang, tlds, maxChecks, queue, brief, ct);
+        else if (brief is null)
+            BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
+
+        return queue;
     }
 
     private async Task TopUpPlannerAsync(
@@ -358,7 +388,6 @@ public sealed class DomainSearchService : IDomainSearchService
         int maxChecks,
         List<DomainCandidate> queue,
         SearchBrief brief,
-        string? warning,
         CancellationToken ct)
     {
         if (_checkPlanner is null || queue.Count >= maxChecks)

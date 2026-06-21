@@ -43,4 +43,22 @@ public class BriefGeneratorParseTests
         Assert.NotNull(brief);
         Assert.Equal("Dating for fighters", brief.ProductSummary);
     }
+
+    [Fact]
+    public void ParseBrief_TruncatedJsonRecoversProductSummaryAndAvoidTerms()
+    {
+        var truncated = """
+            {
+              "productSummary": "A matchmaking platform for urban street fighters",
+              "audience": "fighters",
+              "avoidTerms": ["Tinder", "Street Fighter"],
+              "tldStrategy": "Use .com for the primary consumer-facing brand and broader trust; use .io if .com is unavailable or the product is positioned as a tech-first
+            """;
+
+        var brief = OpenRouterBriefGenerator.ParseBrief(truncated);
+
+        Assert.NotNull(brief);
+        Assert.Contains("matchmaking", brief.ProductSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(brief.AvoidTerms, t => t.Equals("Tinder", StringComparison.OrdinalIgnoreCase));
+    }
 }

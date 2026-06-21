@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
@@ -11,7 +12,7 @@ using SeoDomainFinder.Infrastructure.Options;
 
 namespace SeoDomainFinder.Infrastructure.OpenRouter;
 
-public sealed class OpenRouterBriefGenerator : IBriefGenerator
+public partial class OpenRouterBriefGenerator : IBriefGenerator
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<OpenRouterOptions> _options;
@@ -55,6 +56,7 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
                 No explanation, no markdown, no text before or after the JSON.
                 If the prompt references another product as metaphor (e.g. "X but for Y"), put X in avoidTerms.
                 Prefer invented brand names over literal keyword combinations.
+                Keep the JSON compact.
                 """;
 
             var userPrompt = $"""
@@ -68,7 +70,10 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
             if (parsed is not null)
                 return parsed;
 
-            _logger.LogWarning("Brief parse failed; using fallback");
+            _logger.LogWarning(
+                "Brief parse failed (response length {Length}); using fallback. Snippet: {Snippet}",
+                text.Length,
+                text.Length > 200 ? text[..200] : text);
         }
         catch (Exception ex)
         {
@@ -83,15 +88,18 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
         text = OpenRouterJsonHelper.StripMarkdown(text);
         var objectJson = OpenRouterJsonHelper.ExtractJsonObject(text) ?? text;
 
-        BriefResponse? parsed;
+        BriefResponse? parsed = null;
         try
         {
             parsed = JsonSerializer.Deserialize<BriefResponse>(objectJson, JsonOptions);
         }
         catch
         {
-            return null;
+            parsed = TryParsePartialBrief(objectJson);
         }
+
+        if (parsed is null || string.IsNullOrWhiteSpace(parsed.ProductSummary))
+            parsed = TryParsePartialBrief(objectJson);
 
         if (parsed is null || string.IsNullOrWhiteSpace(parsed.ProductSummary))
             return null;
@@ -111,6 +119,57 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
                 ? "prefer .com for main brand"
                 : parsed.TldStrategy.Trim());
     }
+
+    internal static BriefResponse? TryParsePartialBrief(string json)
+    {
+        var productSummary = ExtractStringField(json, "productSummary");
+        if (string.IsNullOrWhiteSpace(productSummary))
+            return null;
+
+        return new BriefResponse
+        {
+            ProductSummary = productSummary,
+            Audience = ExtractStringField(json, "audience"),
+            Vibe = ExtractStringArray(json, "vibe"),
+            NamingStyles = ExtractStringArray(json, "namingStyles"),
+            ConceptKeywords = ExtractStringArray(json, "conceptKeywords"),
+            AvoidTerms = ExtractStringArray(json, "avoidTerms"),
+            AvoidPatterns = ExtractStringArray(json, "avoidPatterns"),
+            TldStrategy = ExtractStringField(json, "tldStrategy")
+        };
+    }
+
+    private static string? ExtractStringField(string json, string fieldName)
+    {
+        foreach (Match m in StringFieldRegex().Matches(json))
+        {
+            if (string.Equals(m.Groups[1].Value, fieldName, StringComparison.OrdinalIgnoreCase))
+                return m.Groups[2].Value;
+        }
+
+        return null;
+    }
+
+    private static List<string>? ExtractStringArray(string json, string fieldName)
+    {
+        var pattern = $"\"{fieldName}\"\\s*:\\s*\\[([^\\]]*)\\]";
+        var match = Regex.Match(json, pattern, RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return null;
+
+        var items = ArrayItemRegex().Matches(match.Groups[1].Value)
+            .Select(m => m.Groups[1].Value)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+
+        return items.Count > 0 ? items : null;
+    }
+
+    [GeneratedRegex("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.IgnoreCase)]
+    private static partial Regex StringFieldRegex();
+
+    [GeneratedRegex("\"([^\"]+)\"")]
+    private static partial Regex ArrayItemRegex();
 
     private static List<string> MergeTerms(IReadOnlyList<string>? primary, IReadOnlyList<string> defaults)
     {
@@ -149,7 +208,7 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
                 new { role = "user", content = userPrompt }
             },
             temperature = 0.3,
-            max_tokens = 800,
+            max_tokens = 1500,
             response_format = new { type = "json_object" }
         };
 
@@ -166,7 +225,7 @@ public sealed class OpenRouterBriefGenerator : IBriefGenerator
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed class BriefResponse
+    internal sealed class BriefResponse
     {
         public string? ProductSummary { get; set; }
         public string? Audience { get; set; }

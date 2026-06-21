@@ -5,6 +5,20 @@ namespace SeoDomainFinder.Infrastructure.Tests;
 public class CheckPlannerParseTests
 {
     [Fact]
+    public void ApplyCheckCountPlaceholder_DoesNotCorruptJson()
+    {
+        var prompt = OpenRouterCheckPlanner.ApplyCheckCountPlaceholder(
+            OpenRouterCheckPlanner.BuildSystemPrompt(isRefill: false, isTopUp: false, takenPatternHint: null),
+            12);
+
+        Assert.Contains("JSON", prompt);
+        Assert.Contains("No explanation", prompt);
+        Assert.DoesNotContain("JSO12", prompt);
+        Assert.DoesNotContain("12o explanation", prompt);
+        Assert.Contains("12 checks", prompt);
+    }
+
+    [Fact]
     public void ParseChecks_ValidJson()
     {
         var json = """

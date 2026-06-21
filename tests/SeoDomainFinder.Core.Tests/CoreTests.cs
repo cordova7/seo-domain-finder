@@ -374,6 +374,17 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
+    public void SearchBriefFallback_UsesAbstractConceptKeywordsNotRawPrompt()
+    {
+        var keywords = KeywordExtractor.Extract("tinder but for hood street fighters", "en");
+        var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en", keywords);
+
+        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("hood", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(brief.ConceptKeywords, k => k.Equals("street", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("A business concept", brief.ProductSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void DomainQualityFilter_RejectsMashupsAndTrademarks()
     {
         var brief = SearchBriefFallback.Create("tinder but for hood street fighters", "en",

@@ -13,6 +13,7 @@ namespace SeoDomainFinder.Infrastructure.OpenRouter;
 
 public sealed class OpenRouterCheckPlanner : ICheckPlanner
 {
+    internal const string CheckCountPlaceholder = "{CHECK_COUNT}";
     private const int InitialBriefBatchSize = 12;
 
     private readonly IHttpClientFactory _httpClientFactory;
@@ -46,27 +47,51 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 ? Math.Min(InitialBriefBatchSize, request.MaxChecks)
                 : request.MaxChecks);
 
-        var systemPrompt = BuildSystemPrompt(isRefill, isTopUp, request.TakenPatternHint);
+        var systemPrompt = ApplyCheckCountPlaceholder(
+            BuildSystemPrompt(isRefill, isTopUp, request.TakenPatternHint),
+            checkBudget);
 
         var userPrompt = hasBrief
             ? BuildBriefUserPrompt(request, checkBudget)
             : BuildLegacyUserPrompt(request, checkBudget);
 
-        var text = await CallChatAsync(apiKey, systemPrompt.Replace("N", checkBudget.ToString()), userPrompt, ct);
+        var text = await CallChatAsync(apiKey, systemPrompt, userPrompt, ct);
+        var raw = ParseChecksRaw(text, request.Tlds, checkBudget);
         var filtered = FilterChecks(
-            ParseChecksRaw(text, request.Tlds, checkBudget),
+            raw,
             request.Tlds,
             checkBudget,
             request.Brief,
             request.Keywords);
 
-        if (filtered.Count < checkBudget && hasBrief)
-            _logger.LogDebug("Planner returned {Count}/{Budget} after quality filter", filtered.Count, checkBudget);
+        if (raw.Count == 0)
+        {
+            _logger.LogWarning(
+                "Planner parsed 0 checks from model response (length {Length}): {Snippet}",
+                text.Length,
+                text.Length > 200 ? text[..200] : text);
+        }
+        else if (filtered.Count == 0)
+        {
+            _logger.LogWarning(
+                "Planner filtered all {RawCount} parsed checks (quality gate rejected every label)",
+                raw.Count);
+        }
+        else if (filtered.Count < checkBudget)
+        {
+            _logger.LogDebug(
+                "Planner returned {Count}/{Budget} checks after quality filter",
+                filtered.Count,
+                checkBudget);
+        }
 
         return filtered;
     }
 
-    private static string BuildSystemPrompt(bool isRefill, bool isTopUp, string? takenPatternHint)
+    internal static string ApplyCheckCountPlaceholder(string systemPrompt, int checkBudget) =>
+        systemPrompt.Replace(CheckCountPlaceholder, checkBudget.ToString(), StringComparison.Ordinal);
+
+    internal static string BuildSystemPrompt(bool isRefill, bool isTopUp, string? takenPatternHint)
     {
         string systemPrompt;
         if (isTopUp)
@@ -77,7 +102,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 No explanation, no markdown, no text before or after the JSON.
                 Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
                 Prefer invented brand names. Never concatenate multiple keywords.
-                Return exactly N checks in the checks array.
+                Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
                 """;
         }
         else if (isRefill)
@@ -88,7 +113,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 No explanation, no markdown, no text before or after the JSON.
                 Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
                 Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
-                Return exactly N checks in the checks array. Pick TLDs most likely free under the price cap.
+                Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible). Pick TLDs most likely free under the price cap.
                 """;
         }
         else
@@ -100,7 +125,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
                 Prefer coined/blended names over obvious keyword combos (likely taken on .com).
                 Usually pick .com for global/US businesses unless another TLD fits better.
-                Rank best first. Return exactly N checks in the checks array.
+                Rank best first. Return up to {CHECK_COUNT} checks in the checks array (at least 8 if possible).
                 """;
         }
 

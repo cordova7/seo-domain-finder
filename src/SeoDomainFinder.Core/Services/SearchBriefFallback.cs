@@ -22,26 +22,38 @@ public static partial class SearchBriefFallback
         "coined 6-9 char brands", "portmanteaus", "abstract verbs"
     ];
 
+    private static readonly string[] AbstractConceptKeywords =
+    [
+        "matchup", "community", "brand", "venture"
+    ];
+
     public static SearchBrief Create(string prompt, string lang, IReadOnlyList<string> keywords)
     {
         var avoidTerms = new HashSet<string>(TrademarkBlocklist, StringComparer.OrdinalIgnoreCase);
         foreach (var term in DetectMetaphorSources(prompt))
             avoidTerms.Add(term);
 
-        var conceptKeywords = keywords
-            .Where(k => !avoidTerms.Contains(k))
-            .Take(6)
-            .ToList();
-
         return new SearchBrief(
-            ProductSummary: prompt.Length > 200 ? prompt[..200] : prompt,
+            ProductSummary: BuildProductSummary(prompt),
             Audience: "target customers for this business",
             Vibe: ["professional", "memorable"],
             NamingStyles: DefaultNamingStyles,
-            ConceptKeywords: conceptKeywords,
+            ConceptKeywords: AbstractConceptKeywords.ToList(),
             AvoidTerms: avoidTerms.ToList(),
             AvoidPatterns: DefaultAvoidPatterns,
             TldStrategy: "prefer .com for main brand, .io for apps");
+    }
+
+    private static string BuildProductSummary(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+            return "A new business venture seeking a memorable domain name.";
+
+        var trimmed = prompt.Trim();
+        if (trimmed.Length > 160)
+            trimmed = trimmed[..157] + "...";
+
+        return $"A business concept described as: {trimmed}";
     }
 
     internal static IEnumerable<string> DetectMetaphorSources(string prompt)
