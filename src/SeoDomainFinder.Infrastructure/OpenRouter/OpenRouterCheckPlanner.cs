@@ -44,7 +44,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
               No explanation, no markdown, no text before or after the JSON.
               Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
               Avoid patterns similar to taken names. Prefer coined brand names over dictionary phrases.
-              At most N checks. Pick TLDs most likely free under the price cap.
+              Return exactly N checks in the checks array. Pick TLDs most likely free under the price cap.
               """
             : """
               You plan which domains to availability-check for a business.
@@ -53,8 +53,13 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
               Rules: lowercase labels, no hyphens/numbers, 5-12 chars, one TLD per label.
               Prefer coined/blended names over obvious keyword combos (likely taken on .com).
               Usually pick .com for global/US businesses unless another TLD fits better.
-              Rank best first. At most N checks total.
+              Rank best first. Return exactly N checks in the checks array.
               """;
+
+        if (isRefill && !string.IsNullOrWhiteSpace(request.TakenPatternHint))
+        {
+            systemPrompt += "\n" + request.TakenPatternHint;
+        }
 
         var seeds = string.Join(", ", request.SeedNames.Take(40));
         var keywords = string.Join(", ", request.Keywords);
@@ -174,6 +179,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
                 new { role = "user", content = userPrompt }
             },
             temperature = 0.2,
+            max_tokens = 2000,
             response_format = new { type = "json_object" }
         };
 

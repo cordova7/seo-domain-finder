@@ -12,7 +12,8 @@ public sealed record CheckPlannerRequest(
     IReadOnlyList<string> SeedNames,
     string? OpenRouterApiKey,
     IReadOnlyList<string>? TakenSample = null,
-    int? RemainingChecks = null);
+    int? RemainingChecks = null,
+    string? TakenPatternHint = null);
 
 public interface ICheckPlanner
 {

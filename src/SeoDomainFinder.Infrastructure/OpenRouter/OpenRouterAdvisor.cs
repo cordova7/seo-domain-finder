@@ -50,7 +50,8 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
             Sample taken names: {taken}
             AI refill used: {(summary.RefillTriggered ? "yes" : "no")}
 
-            Based on this domain search report, pick the best option if any, explain why, and give one concrete next step (TLD, naming style, or price). Be specific to the data. 3-5 sentences. Plain text only.
+            Based on this domain search report, pick the best option if any, explain why, and give one concrete next step (naming style or price). Be specific to the data. 3-5 sentences. Plain text only.
+            If suggesting TLDs, only mention TLDs from the searched list above — never recommend TLDs the user did not check.
             """;
 
         var client = _httpClientFactory.CreateClient("OpenRouter");
@@ -64,7 +65,11 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
                 new
                 {
                     role = "system",
-                    content = "You are a domain naming advisor. Be concise, specific, and grounded in the search data provided."
+                    content = """
+                        You are a domain naming advisor. Be concise, specific, and grounded in the search data provided.
+                        Only recommend TLDs from the user's searched list. Never suggest TLDs they did not check.
+                        When zero domains were found, suggest retrying with alternate allowed TLDs or more invented brand labels.
+                        """
                 },
                 new { role = "user", content = userPrompt }
             },

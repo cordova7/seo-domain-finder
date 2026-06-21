@@ -38,7 +38,7 @@
   "error": "Error",
   "noResults": "No results. Try a different description.",
   "progressGenerating": "Generating SEO names...",
-  "progressPlanning": "AI planning which domains to check...",
+  "progressPlanning": "AI planning which domains to check (free models may take 1–2 min)...",
   "progressChecking": "Checking",
   "progressRefining": "AI adjusting search based on results...",
   "progressAdvising": "AI analyzing results...",

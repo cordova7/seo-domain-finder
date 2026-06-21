@@ -153,6 +153,77 @@ public class DomainSearchServiceTests
     }
 
     [Fact]
+    public async Task Search_WithPlanner_TriggersRefillWhenQueueExhausted()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new RefillingFakePlanner();
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner);
+        var events = new List<SearchProgressEvent>();
+
+        await service.SearchAsync(
+            new DomainSearchRequest
+            {
+                Prompt = "tinder but for hood street fighters",
+                Language = "en",
+                Tlds = ["com", "io"],
+                UseLlm = true,
+                MaxCandidates = 5,
+                MaxChecks = 25
+            },
+            new Progress<SearchProgressEvent>(events.Add));
+
+        Assert.Equal(2, planner.CallCount);
+        Assert.Contains(events, e => e.Phase == "refining");
+        var maxChecksUsed = events.Max(e => e.ChecksUsed);
+        Assert.True(maxChecksUsed > 15, $"Expected >15 checks, got {maxChecksUsed}");
+    }
+
+    [Fact]
+    public void DeriveTakenPatternHint_DetectsSuffixHeavyNames()
+    {
+        var hint = DomainSearchService.DeriveTakenPatternHint(
+        [
+            "tindify.com",
+            "hoodify.io",
+            "streetly.com",
+            "fightr.com"
+        ]);
+
+        Assert.NotNull(hint);
+        Assert.Contains("-ify", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Search_WarningWithAiOn_DoesNotSuggestEnableAi()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var planner = new FakePlanner([new PlannedCheck("takenname", "com", 90)]);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker,
+            planner);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "niche startup",
+            Language = "en",
+            Tlds = ["com"],
+            UseLlm = true,
+            MaxCandidates = 3,
+            MaxChecks = 10
+        });
+
+        Assert.NotNull(result.Warning);
+        Assert.DoesNotContain("enable AI", result.Warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("invented", result.Warning, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Search_ReturnsOnlyAvailableDomains()
     {
         var checker = new FakeChecker(availableAfter: 3);
@@ -297,6 +368,30 @@ public class DomainSearchServiceTests
     {
         public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default) =>
             Task.FromResult(checks);
+    }
+
+    private sealed class RefillingFakePlanner : ICheckPlanner
+    {
+        private int _calls;
+        public int CallCount => _calls;
+
+        public Task<IReadOnlyList<PlannedCheck>> PlanAsync(CheckPlannerRequest request, CancellationToken ct = default)
+        {
+            _calls++;
+            if (_calls == 1)
+            {
+                return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                    Enumerable.Range(0, 15)
+                        .Select(i => new PlannedCheck($"slot{i}", "com", 80))
+                        .ToList());
+            }
+
+            var remaining = request.RemainingChecks ?? 10;
+            return Task.FromResult<IReadOnlyList<PlannedCheck>>(
+                Enumerable.Range(0, remaining)
+                    .Select(i => new PlannedCheck($"refill{i}", "io", 75))
+                    .ToList());
+        }
     }
 
     private sealed class FakeChecker(

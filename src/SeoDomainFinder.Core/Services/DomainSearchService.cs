@@ -86,38 +86,6 @@ public sealed class DomainSearchService : IDomainSearchService
             if (available.Count >= target || checksUsed >= maxChecks || attempts >= maxChecks)
                 break;
 
-            if (!refillTriggered &&
-                request.UseLlm &&
-                _checkPlanner is not null &&
-                checksUsed >= RefillCheckThreshold &&
-                available.Count < RefillMinFound &&
-                maxChecks - checksUsed >= RefillMinRemaining)
-            {
-                refillTriggered = true;
-                Report(progress, "refining", checksUsed, maxChecks, available.Count, null);
-
-                try
-                {
-                    var refill = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
-                        request.Prompt,
-                        lang,
-                        keywords,
-                        tlds,
-                        maxChecks,
-                        request.MaxPriceUsd,
-                        nameGen.Names.ToList(),
-                        request.OpenRouterApiKey,
-                        unavailableSample.ToList(),
-                        maxChecks - checksUsed), ct);
-
-                    queue.AddRange(PlannedToCandidates(refill, keywords, lang));
-                }
-                catch (Exception ex)
-                {
-                    warning = AppendWarning(warning, $"AI refill failed: {ex.Message}");
-                }
-            }
-
             var candidate = queue[i];
             ct.ThrowIfCancellationRequested();
             attempts++;
@@ -140,6 +108,10 @@ public sealed class DomainSearchService : IDomainSearchService
             if (string.Equals(check.Reason, DomainCheckReasons.Premium, StringComparison.OrdinalIgnoreCase))
             {
                 premiumSkipped++;
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, ct),
+                    ref refillTriggered, ref warning);
                 continue;
             }
 
@@ -148,6 +120,10 @@ public sealed class DomainSearchService : IDomainSearchService
                 unavailableCount++;
                 if (unavailableSample.Count < 12)
                     unavailableSample.Add(candidate.FullDomain);
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, ct),
+                    ref refillTriggered, ref warning);
                 continue;
             }
 
@@ -159,6 +135,10 @@ public sealed class DomainSearchService : IDomainSearchService
                 unavailableCount++;
                 if (unavailableSample.Count < 12)
                     unavailableSample.Add(candidate.FullDomain);
+                ApplyRefillOutcome(await TryRefillAsync(
+                    request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                    refillTriggered, available, checksUsed, progress, ct),
+                    ref refillTriggered, ref warning);
                 continue;
             }
 
@@ -169,10 +149,16 @@ public sealed class DomainSearchService : IDomainSearchService
             available.Add(candidate);
 
             ReportFound(progress, checksUsed, maxChecks, available.Count, candidate);
+
+            ApplyRefillOutcome(await TryRefillAsync(
+                request, nameGen, keywords, lang, tlds, maxChecks, queue, unavailableSample,
+                refillTriggered, available, checksUsed, progress, ct),
+                ref refillTriggered, ref warning);
         }
 
         warning = BuildAvailabilityWarning(
-            warning, available, checksUsed, credentialFailures, rateLimitFailures, request.MaxPriceUsd);
+            warning, available, checksUsed, credentialFailures, rateLimitFailures,
+            request.MaxPriceUsd, request.UseLlm);
 
         var ranked = available
             .OrderByDescending(c => c.TotalScore)
@@ -302,8 +288,9 @@ public sealed class DomainSearchService : IDomainSearchService
                     var used = generatorUsed is "hybrid" or "heuristic"
                         ? $"{generatorUsed}+planner"
                         : "planner";
-                    return new QueueBuildResult(
-                        PlannedToCandidates(planned, keywords, lang), used, warning);
+                    var queue = PlannedToCandidates(planned, keywords, lang);
+                    BackfillQueue(queue, rawNames, keywords, lang, tlds, maxChecks);
+                    return new QueueBuildResult(queue, used, warning);
                 }
 
                 warning = AppendWarning(warning,
@@ -349,6 +336,126 @@ public sealed class DomainSearchService : IDomainSearchService
         return list;
     }
 
+    private void BackfillQueue(
+        List<DomainCandidate> queue,
+        IReadOnlyList<string> rawNames,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks)
+    {
+        if (queue.Count >= maxChecks)
+            return;
+
+        var seen = new HashSet<string>(queue.Select(c => c.FullDomain), StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in BuildCandidateQueue(rawNames, keywords, lang, tlds))
+        {
+            if (queue.Count >= maxChecks)
+                break;
+            if (seen.Add(candidate.FullDomain))
+                queue.Add(candidate);
+        }
+    }
+
+    private async Task<RefillOutcome?> TryRefillAsync(
+        DomainSearchRequest request,
+        NameGenResult nameGen,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds,
+        int maxChecks,
+        List<DomainCandidate> queue,
+        List<string> unavailableSample,
+        bool refillTriggered,
+        List<DomainCandidate> available,
+        int checksUsed,
+        IProgress<SearchProgressEvent>? progress,
+        CancellationToken ct)
+    {
+        if (refillTriggered ||
+            !request.UseLlm ||
+            _checkPlanner is null ||
+            checksUsed < RefillCheckThreshold ||
+            available.Count >= RefillMinFound ||
+            maxChecks - checksUsed < RefillMinRemaining)
+        {
+            return null;
+        }
+
+        Report(progress, "refining", checksUsed, maxChecks, available.Count, null);
+
+        try
+        {
+            var alreadyChecked = new HashSet<string>(
+                queue.Select(c => c.FullDomain),
+                StringComparer.OrdinalIgnoreCase);
+
+            var refill = await _checkPlanner.PlanAsync(new CheckPlannerRequest(
+                request.Prompt,
+                lang,
+                keywords,
+                tlds,
+                maxChecks,
+                request.MaxPriceUsd,
+                nameGen.Names.ToList(),
+                request.OpenRouterApiKey,
+                unavailableSample.ToList(),
+                maxChecks - checksUsed,
+                DeriveTakenPatternHint(unavailableSample)), ct);
+
+            foreach (var candidate in PlannedToCandidates(refill, keywords, lang))
+            {
+                if (alreadyChecked.Add(candidate.FullDomain))
+                    queue.Add(candidate);
+            }
+
+            return new RefillOutcome(null);
+        }
+        catch (Exception ex)
+        {
+            return new RefillOutcome($"AI refill failed: {ex.Message}");
+        }
+    }
+
+    private static void ApplyRefillOutcome(
+        RefillOutcome? outcome,
+        ref bool refillTriggered,
+        ref string? warning)
+    {
+        if (outcome is null)
+            return;
+
+        refillTriggered = true;
+        if (outcome.WarningAppend is not null)
+            warning = AppendWarning(warning, outcome.WarningAppend);
+    }
+
+    private sealed record RefillOutcome(string? WarningAppend);
+
+    internal static string? DeriveTakenPatternHint(IReadOnlyList<string> taken)
+    {
+        if (taken.Count == 0)
+            return null;
+
+        var labels = taken
+            .Select(d => d.Split('.', 2)[0])
+            .Where(l => l.Length > 0)
+            .ToList();
+
+        if (labels.Count == 0)
+            return null;
+
+        var suffixHits = labels.Count(l =>
+            l.EndsWith("ify", StringComparison.OrdinalIgnoreCase) ||
+            l.EndsWith("ly", StringComparison.OrdinalIgnoreCase) ||
+            (l.Length >= 5 && l.EndsWith('r')));
+
+        if (suffixHits < (labels.Count + 1) / 2)
+            return null;
+
+        return "Taken names heavily used -ify, -ly, or -r suffixes. Use different coined blends (portmanteaus, 6-9 chars).";
+    }
+
     private static List<string> NormalizeTlds(IReadOnlyList<string> requestTlds)
     {
         var tlds = requestTlds
@@ -374,7 +481,8 @@ public sealed class DomainSearchService : IDomainSearchService
         int checksUsed,
         int credentialFailures,
         int rateLimitFailures,
-        decimal maxPriceUsd)
+        decimal maxPriceUsd,
+        bool useLlm)
     {
         if (available.Count > 0)
         {
@@ -401,9 +509,12 @@ public sealed class DomainSearchService : IDomainSearchService
                 "Many checks hit Porkbun rate limits. Results may be incomplete.");
         }
 
+        var hint = useLlm
+            ? "Try more invented brand names, add TLDs like .app or .dev, or raise the price limit."
+            : "Try shorter names, add a country TLD (e.g. .mx), raise the price limit, or enable AI.";
+
         return AppendWarning(warning,
-            $"Checked {checksUsed} domains; none available under ${maxPriceUsd:F0}. " +
-            "Try shorter names, add a country TLD (e.g. .mx), raise the price limit, or enable AI.");
+            $"Checked {checksUsed} domains; none available under ${maxPriceUsd:F0}. {hint}");
     }
 
     private static void Report(
