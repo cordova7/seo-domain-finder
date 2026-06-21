@@ -240,7 +240,12 @@ export default function HomePage() {
         )}
 
         {!loading && results.length === 0 && meta && (
-          <p className="mt-6 text-center text-sm text-slate-500">{t.noResults}</p>
+          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center dark:border-zinc-700 dark:bg-zinc-800/50">
+            <p className="text-sm font-medium text-slate-700 dark:text-zinc-200">{t.noResults}</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-zinc-400">
+              {t.noResultsHint}
+            </p>
+          </div>
         )}
       </main>
 

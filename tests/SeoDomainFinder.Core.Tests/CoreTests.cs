@@ -1,5 +1,6 @@
 using SeoDomainFinder.Core.Abstractions;
 using SeoDomainFinder.Core.Generators;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Core.Scoring;
 using SeoDomainFinder.Core.Services;
@@ -86,6 +87,62 @@ public class SeoScorerTests
 
         Assert.True(result.Score > 0);
         Assert.Contains("alertas", result.Explanation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Score_SpanishExplanation_UsesLocalizedLabels()
+    {
+        var scorer = new SeoScorer();
+        var brief = new SearchBrief(
+            "Tienda de bicicletas premium",
+            "ciclistas urbanos",
+            ["premium", "moderno"],
+            ["portmanteaus metafóricos"],
+            ["bicicleta", "ciclismo"],
+            [],
+            [],
+            "preferir .com");
+
+        var result = scorer.Score("bicistyl", ["bicicleta"], "es", brief);
+
+        Assert.Contains("puntuación de marca", result.Explanation, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("brand scoring", result.Explanation, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+public class SearchLocaleTests
+{
+    [Theory]
+    [InlineData("es", "es")]
+    [InlineData("ES", "es")]
+    [InlineData("pt-BR", "pt")]
+    [InlineData("it", "en")]
+    [InlineData(null, "en")]
+    public void Normalize_MapsToSupportedLocales(string? input, string expected) =>
+        Assert.Equal(expected, SearchLocale.Normalize(input));
+
+    [Fact]
+    public void Resolve_UsesRequestLanguageWhenProvided()
+    {
+        Assert.Equal("es", SearchLocale.Resolve("es", "hello world"));
+    }
+}
+
+public class SearchStringsTests
+{
+    [Fact]
+    public void Get_ReturnsSpanishForEs() =>
+        Assert.Equal("puntuación de marca", SearchStrings.Get("es", "seo.brandScoring"));
+}
+
+public class ShortAdviceBuilderTests
+{
+    [Fact]
+    public void Build_SpanishNoneFound()
+    {
+        var advice = ShortAdviceBuilder.Build([], 5, 10, 3, "es");
+        Assert.Contains("No hay dominios disponibles", advice);
+        Assert.DoesNotContain("No available domains", advice);
     }
 }
 

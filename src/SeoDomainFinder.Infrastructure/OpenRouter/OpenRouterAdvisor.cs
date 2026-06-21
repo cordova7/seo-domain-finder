@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Infrastructure.Options;
 
@@ -30,6 +31,9 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
         if (string.IsNullOrWhiteSpace(apiKey))
             return null;
 
+        var lang = SearchLocale.Normalize(summary.Language);
+        var languageName = SearchLocale.LlmLanguageName(lang);
+
         var found = summary.Found.Count == 0
             ? "none"
             : string.Join(", ", summary.Found.Select(f => $"{f.Domain} (${f.PriceUsd:F2})"));
@@ -48,6 +52,7 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
               """;
 
         var userPrompt = $"""
+            UI language: {lang}
             {briefContext}Business: {summary.Prompt}
             Keywords: {string.Join(", ", summary.Keywords)}
             TLDs searched: {string.Join(", ", summary.Tlds.Select(t => $".{t}"))}
@@ -59,9 +64,12 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
             Sample taken names: {taken}
             AI refill used: {(summary.RefillTriggered ? "yes" : "no")}
 
-            Based on this domain search report, pick the best option if any, explain why, and give one concrete next step (naming style or price). Be specific to the data. 3-5 sentences. Plain text only.
+            Based on this domain search report, pick the best option if any, explain why, and give one concrete next step (naming style or price). Be specific to the data.
+            Respond in {languageName}. 3-5 sentences. Plain text only.
             If suggesting TLDs, only mention TLDs from the searched list above — never recommend TLDs the user did not check.
             """;
+
+        var localeInstruction = SearchLocale.LlmResponseInstruction(lang);
 
         var client = _httpClientFactory.CreateClient("OpenRouter");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
@@ -74,8 +82,9 @@ public sealed class OpenRouterAdvisor : IDomainAdvisor
                 new
                 {
                     role = "system",
-                    content = """
+                    content = $"""
                         You are a domain naming advisor. Be concise, specific, and grounded in the search data provided.
+                        {localeInstruction}
                         Only recommend TLDs from the user's searched list. Never suggest TLDs they did not check.
                         When zero domains were found, suggest retrying with alternate allowed TLDs or more invented brand labels.
                         Warn about trademark risk if found domains contain terms from the avoid list.

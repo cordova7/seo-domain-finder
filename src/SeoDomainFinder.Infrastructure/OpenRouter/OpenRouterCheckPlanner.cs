@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Core.Services;
 using SeoDomainFinder.Infrastructure.Options;
@@ -155,12 +156,16 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
     private static string BuildBriefUserPrompt(CheckPlannerRequest request, int checkBudget)
     {
         var brief = request.Brief!;
+        var lang = SearchLocale.Normalize(request.Language);
         var tlds = string.Join(", ", request.Tlds.Select(t => $".{t}"));
         var taken = request.TakenSample is { Count: > 0 }
             ? string.Join(", ", request.TakenSample.Take(12))
             : "none yet";
 
         return $"""
+            UI language: {lang}
+            {SearchLocale.LlmResponseInstruction(lang)}
+            {SearchLocale.LlmMorphemeHint(lang)}
             Original user prompt: {request.Prompt}
             Product: {brief.ProductSummary}
             Audience: {brief.Audience}
@@ -172,7 +177,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             TLD strategy: {brief.TldStrategy}
             Allowed TLDs: {tlds}
             {(request.Tlds.Count == 1 && request.Tlds[0].Equals("com", StringComparison.OrdinalIgnoreCase)
-                ? "Only .com allowed — use soft metaphors (fadcrate, buzzstall) and 8-11 char coinages; avoid 6-letter trendy .com."
+                ? "Only .com allowed — use soft metaphors and 8-11 char coinages rooted in the UI language; avoid 6-letter trendy .com."
                 : request.Tlds.Count > 1
                     ? "Distribute checks evenly across allowed TLDs — do not put more than half on .com."
                     : "")}
@@ -180,6 +185,7 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             Check budget: {checkBudget}
             Taken/unavailable so far: {taken}
             Use the tiered mix: soft metaphor portmanteaus + opaque blends. Never -ify/-ly suffix spam.
+            Examples like fadcrate in guides are English illustrations only — coin labels using morphemes from the UI language.
             """;
     }
 
@@ -193,7 +199,9 @@ public sealed class OpenRouterCheckPlanner : ICheckPlanner
             : "none yet";
 
         return $"""
-            Language: {request.Language}
+            UI language: {SearchLocale.Normalize(request.Language)}
+            {SearchLocale.LlmResponseInstruction(request.Language)}
+            {SearchLocale.LlmMorphemeHint(request.Language)}
             Business: {request.Prompt}
             Keywords: {keywords}
             Allowed TLDs: {tlds}

@@ -1,4 +1,5 @@
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 
 namespace SeoDomainFinder.Core.Scoring;
@@ -17,13 +18,15 @@ public sealed class SeoScorer : ISeoScorer
         string? language,
         SearchBrief? brief)
     {
-        if (brief is null)
-            return ScoreClassic(domainName, keywords);
+        var lang = SearchLocale.Normalize(language);
 
-        return ScoreWithBrief(domainName, keywords, brief);
+        if (brief is null)
+            return ScoreClassic(domainName, keywords, lang);
+
+        return ScoreWithBrief(domainName, keywords, brief, lang);
     }
 
-    private static SeoScoreResult ScoreClassic(string domainName, IReadOnlyList<string> keywords)
+    private static SeoScoreResult ScoreClassic(string domainName, IReadOnlyList<string> keywords, string lang)
     {
         var name = domainName.ToLowerInvariant();
         var score = 0;
@@ -35,73 +38,76 @@ public sealed class SeoScorer : ISeoScorer
             if (name.Contains(kw, StringComparison.Ordinal))
             {
                 score += Math.Min(25, 8 + kw.Length);
-                parts.Add($"matches '{keyword}'");
+                parts.Add(SearchStrings.Get(lang, "seo.matches", keyword));
             }
         }
 
         if (name.Length is >= 8 and <= 18)
         {
             score += 10;
-            parts.Add("good length (8-18)");
+            parts.Add(SearchStrings.Get(lang, "seo.goodLength"));
         }
         else if (name.Length is >= 5 and <= 22)
         {
             score += 5;
-            parts.Add("acceptable length");
+            parts.Add(SearchStrings.Get(lang, "seo.acceptableLength"));
         }
         else if (name.Length > 25)
         {
             score -= 5;
-            parts.Add("long domain");
+            parts.Add(SearchStrings.Get(lang, "seo.longDomain"));
         }
 
         if (keywords.Count >= 2 && keywords.Take(2).All(k => name.Contains(k.ToLowerInvariant(), StringComparison.Ordinal)))
         {
             score += 15;
-            parts.Add("multi-keyword match");
+            parts.Add(SearchStrings.Get(lang, "seo.multiKeywordMatch"));
         }
 
         var geoModifiers = new[] { "mx", "global", "world", "app", "hub", "pro", "now", "auto" };
         if (geoModifiers.Any(m => name.EndsWith(m, StringComparison.Ordinal) || name.Contains(m, StringComparison.Ordinal)))
         {
             score += 5;
-            parts.Add("modifier keyword");
+            parts.Add(SearchStrings.Get(lang, "seo.modifierKeyword"));
         }
 
         score = Math.Clamp(score, 0, 100);
-        var explanation = parts.Count > 0 ? string.Join("; ", parts) : "generic name";
+        var explanation = parts.Count > 0
+            ? string.Join("; ", parts)
+            : SearchStrings.Get(lang, "seo.genericName");
         return new SeoScoreResult(score, explanation);
     }
 
     private static SeoScoreResult ScoreWithBrief(
         string domainName,
         IReadOnlyList<string> keywords,
-        SearchBrief brief)
+        SearchBrief brief,
+        string lang)
     {
         var name = domainName.ToLowerInvariant();
         var score = 40;
-        var parts = new List<string> { "brand scoring" };
+        var parts = new List<string> { SearchStrings.Get(lang, "seo.brandScoring") };
 
         if (name.Length is >= 8 and <= 11)
         {
             score += 15;
-            parts.Add("ideal brand length (8-11)");
+            parts.Add(SearchStrings.Get(lang, "seo.idealBrandLength"));
         }
         else if (name.Length is >= 6 and <= 12)
         {
             score += 8;
-            parts.Add("acceptable coined length");
+            parts.Add(SearchStrings.Get(lang, "seo.acceptableCoinedLength"));
         }
         else
         {
             score -= 5;
-            parts.Add("length penalty");
+            parts.Add(SearchStrings.Get(lang, "seo.lengthPenalty"));
         }
 
         if (HasSoftMetaphorShape(name))
         {
             score += 8;
-            parts.Add("soft metaphor portmanteau");
+            parts.Add(SearchStrings.Get(lang, "seo.softMetaphorPortmanteau"));
         }
 
         var literalTerms = keywords.Concat(brief.AvoidTerms).Distinct(StringComparer.OrdinalIgnoreCase);
@@ -112,25 +118,25 @@ public sealed class SeoScorer : ISeoScorer
             {
                 keywordHits++;
                 score -= 15;
-                parts.Add($"literal '{term}' penalty");
+                parts.Add(SearchStrings.Get(lang, "seo.literalPenalty", term));
             }
         }
 
         if (keywordHits == 1)
         {
             score += 10;
-            parts.Add("single concept evoked");
+            parts.Add(SearchStrings.Get(lang, "seo.singleConceptEvoked"));
         }
         else if (keywordHits >= 2)
         {
             score -= 20;
-            parts.Add("keyword mashup penalty");
+            parts.Add(SearchStrings.Get(lang, "seo.keywordMashupPenalty"));
         }
 
         if (ModifierSuffixes.Any(s => name.EndsWith(s, StringComparison.Ordinal)))
         {
             score -= 10;
-            parts.Add("generic suffix penalty");
+            parts.Add(SearchStrings.Get(lang, "seo.genericSuffixPenalty"));
         }
 
         foreach (var concept in brief.ConceptKeywords)
@@ -138,7 +144,7 @@ public sealed class SeoScorer : ISeoScorer
             if (concept.Length >= 3 && name.Contains(concept, StringComparison.OrdinalIgnoreCase) && keywordHits <= 1)
             {
                 score += 5;
-                parts.Add($"evokes '{concept}'");
+                parts.Add(SearchStrings.Get(lang, "seo.evokes", concept));
                 break;
             }
         }

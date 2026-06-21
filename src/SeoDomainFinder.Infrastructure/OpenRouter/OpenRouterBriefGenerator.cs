@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Core.Services;
 using SeoDomainFinder.Infrastructure.Options;
@@ -30,7 +31,7 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
 
     public async Task<SearchBrief> GenerateAsync(BriefGeneratorRequest request, CancellationToken ct = default)
     {
-        var lang = KeywordExtractor.DetectLanguage(request.Prompt, request.Language);
+        var lang = SearchLocale.Resolve(request.Language, request.Prompt);
         var keywords = KeywordExtractor.Extract(request.Prompt, lang);
 
         var apiKey = request.OpenRouterApiKey ?? _options.CurrentValue.ApiKey;
@@ -40,8 +41,13 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
         try
         {
             var tlds = string.Join(", ", request.Tlds.Select(t => $".{t}"));
-            var systemPrompt = """
+            var localeInstruction = SearchLocale.LlmResponseInstruction(lang);
+            var languageName = SearchLocale.LlmLanguageName(lang);
+            var systemPrompt = $$"""
                 You interpret a business description for domain name search.
+                {{localeInstruction}}
+                Write productSummary, audience, vibe, and conceptKeywords in {{languageName}}.
+                conceptKeywords must be evocative roots in {{languageName}} from the user's intent — not English translations unless the UI language is English.
                 Respond with a single JSON object:
                 {
                   "productSummary": "one sentence what the business is",
@@ -57,7 +63,7 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
                 If the prompt references another product as metaphor (e.g. "X but for Y") or a trademark (tiktok, tik-tok), put the brand in avoidTerms only.
                 Capture the interaction model (matching, discovery, swiping, booking, viral trends) in productSummary and conceptKeywords — not the trademark.
                 Do not genericize: preserve subculture, scene, tone, and niche vocabulary in vibe and conceptKeywords.
-                conceptKeywords must use words from the user's intent (e.g. hood, street, viral, store) — not sanitized startup jargon.
+                conceptKeywords must use words from the user's intent — not sanitized startup jargon.
                 namingStyles should favor REGISTRABILITY: longer opaque blends over short trendy startup names.
                 For each namingStyle, assume squatters already own the obvious variants — planner must suggest unlikely-taken coinages.
                 Prefer invented brand names over literal keyword combinations.
@@ -65,7 +71,7 @@ public partial class OpenRouterBriefGenerator : IBriefGenerator
                 """;
 
             var userPrompt = $"""
-                Language: {lang}
+                UI language: {lang}
                 Business: {request.Prompt}
                 Allowed TLDs: {tlds}
                 """;

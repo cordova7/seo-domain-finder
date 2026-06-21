@@ -21,6 +21,8 @@ Describe your business or project. The app generates SEO-ranked name ideas, chec
 3. Each candidate is checked against Porkbun for **real** availability and registration price.
 4. Only available domains within your max price are returned, ranked by SEO score.
 
+Not every search finds a match. Short `.com` names are often taken. If nothing appears, try another description, add TLDs (e.g. `.io`, country codes), raise the max price, or run the search again.
+
 Searches use **server-sent events** so the UI shows live progress (check count, current domain, ETA). A typical search checks up to **25 domains** and takes about **1-4 minutes**, because Porkbun allows roughly **one availability check every 10 seconds** per API key.
 
 ## Architecture
@@ -47,6 +49,7 @@ Searches use **server-sent events** so the UI shows live progress (check count, 
 - Heuristic name generation (works without AI)
 - Optional AI enhancement via [OpenRouter free models](https://openrouter.ai/openrouter/free)
 - Global language selector; UI translated in EN / ES / PT / FR / DE
+- AI analysis, SEO explanations, and backend warnings localized to match the UI language (EN / ES / PT / FR / DE)
 - Demo rate limits: 25 domain checks per session
 - Live search progress via SSE (real check count and estimated time remaining)
 

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 
 namespace SeoDomainFinder.Core.Services;
@@ -17,17 +18,10 @@ public static partial class SearchBriefFallback
         "keyword stacks", "-hub", "-app", "-pro", "-ify", "-ly", "short trendy .com brands"
     ];
 
-    private static readonly string[] DefaultNamingStyles =
-    [
-        "soft metaphor portmanteaus (fadcrate, buzzstall)",
-        "8-11 char opaque blends",
-        "abstract coined brands"
-    ];
-
-  private static readonly string[] DefaultVibe = ["memorable", "distinctive"];
-
     public static SearchBrief Create(string prompt, string lang, IReadOnlyList<string> keywords)
     {
+        var locale = SearchLocale.Normalize(lang);
+
         var avoidTerms = new HashSet<string>(TrademarkBlocklist, StringComparer.OrdinalIgnoreCase);
         foreach (var term in DetectMetaphorSources(prompt))
             avoidTerms.Add(term);
@@ -41,17 +35,32 @@ public static partial class SearchBriefFallback
             .ToList();
 
         if (conceptKeywords.Count == 0)
-            conceptKeywords = ["venture", "brand"];
+        {
+            conceptKeywords =
+            [
+                SearchStrings.Get(locale, "brief.defaultConceptVenture"),
+                SearchStrings.Get(locale, "brief.defaultConceptBrand")
+            ];
+        }
 
         return new SearchBrief(
-            ProductSummary: BuildProductSummary(prompt),
-            Audience: "target customers for this business",
-            Vibe: DefaultVibe,
-            NamingStyles: DefaultNamingStyles,
+            ProductSummary: BuildProductSummary(prompt, locale),
+            Audience: SearchStrings.Get(locale, "brief.audience"),
+            Vibe:
+            [
+                SearchStrings.Get(locale, "brief.vibeMemorable"),
+                SearchStrings.Get(locale, "brief.vibeDistinctive")
+            ],
+            NamingStyles:
+            [
+                SearchStrings.Get(locale, "brief.namingStyle1"),
+                SearchStrings.Get(locale, "brief.namingStyle2"),
+                SearchStrings.Get(locale, "brief.namingStyle3")
+            ],
             ConceptKeywords: conceptKeywords,
             AvoidTerms: avoidTerms.ToList(),
             AvoidPatterns: DefaultAvoidPatterns,
-            TldStrategy: "short pronounceable .com names are usually taken; prefer 8-10 char opaque blends on .com");
+            TldStrategy: SearchStrings.Get(locale, "brief.tldStrategy"));
     }
 
     internal static IEnumerable<string> DetectTrademarkVariants(string prompt)
@@ -67,16 +76,16 @@ public static partial class SearchBriefFallback
     [GeneratedRegex(@"\btik[\s\-]?tok\b", RegexOptions.IgnoreCase)]
     private static partial Regex TikTokPattern();
 
-    private static string BuildProductSummary(string prompt)
+    private static string BuildProductSummary(string prompt, string locale)
     {
         if (string.IsNullOrWhiteSpace(prompt))
-            return "A new business venture seeking a memorable domain name.";
+            return SearchStrings.Get(locale, "brief.productSummaryEmpty");
 
         var trimmed = prompt.Trim();
         if (trimmed.Length > 160)
             trimmed = trimmed[..157] + "...";
 
-        return $"A business concept described as: {trimmed}";
+        return SearchStrings.Get(locale, "brief.productSummaryPrefix", trimmed);
     }
 
     internal static IEnumerable<string> DetectMetaphorSources(string prompt)

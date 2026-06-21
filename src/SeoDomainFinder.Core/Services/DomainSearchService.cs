@@ -1,4 +1,5 @@
 using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Localization;
 using SeoDomainFinder.Core.Models;
 
 namespace SeoDomainFinder.Core.Services;
@@ -38,7 +39,7 @@ public sealed class DomainSearchService : IDomainSearchService
         IProgress<SearchProgressEvent>? progress = null,
         CancellationToken ct = default)
     {
-        var lang = KeywordExtractor.DetectLanguage(request.Prompt, request.Language);
+        var lang = SearchLocale.Resolve(request.Language, request.Prompt);
         var keywords = KeywordExtractor.Extract(request.Prompt, lang);
         var tlds = NormalizeTlds(request.Tlds);
 
@@ -60,7 +61,7 @@ public sealed class DomainSearchService : IDomainSearchService
             catch (Exception ex)
             {
                 brief = SearchBriefFallback.Create(request.Prompt, lang, keywords);
-                warning = AppendWarning(warning, $"AI brief failed, using fallback: {ex.Message}");
+                warning = AppendWarning(warning, SearchStrings.Get(lang, "warn.aiBriefFailed", ex.Message));
             }
         }
         else
@@ -84,7 +85,7 @@ public sealed class DomainSearchService : IDomainSearchService
 
         var nameGen = useBriefPath
             ? new NameGenResult([], "brief", warning)
-            : await GenerateNamesAsync(request, genRequest, ct);
+            : await GenerateNamesAsync(request, genRequest, lang, ct);
         generatorUsed = nameGen.GeneratorUsed;
         warning = nameGen.Warning ?? warning;
 
@@ -151,7 +152,7 @@ public sealed class DomainSearchService : IDomainSearchService
 
         warning = BuildAvailabilityWarning(
             warning, available, checksUsed, credentialFailures, rateLimitFailures,
-            request.MaxPriceUsd, request.UseLlm);
+            request.MaxPriceUsd, request.UseLlm, lang);
 
         var ranked = available
             .OrderByDescending(c => c.TotalScore)
@@ -160,6 +161,7 @@ public sealed class DomainSearchService : IDomainSearchService
             .ToList();
 
         var summary = new SearchSummary(
+            lang,
             request.Prompt,
             keywords,
             tlds,
@@ -185,12 +187,12 @@ public sealed class DomainSearchService : IDomainSearchService
                 }
                 catch (Exception ex)
                 {
-                    warning = AppendWarning(warning, $"AI advice failed: {ex.Message}");
+                    warning = AppendWarning(warning, SearchStrings.Get(lang, "warn.aiAdviceFailed", ex.Message));
                 }
             }
             else
             {
-                advice = BuildShortAdvice(ranked, checksUsed, maxChecks, unavailableCount);
+                advice = ShortAdviceBuilder.Build(ranked, checksUsed, maxChecks, unavailableCount, lang);
             }
         }
 
@@ -245,7 +247,7 @@ public sealed class DomainSearchService : IDomainSearchService
         if (batch1Queue.Count == 0)
         {
             state.Warning = AppendWarning(state.Warning,
-                "AI planner returned no valid domains; checking heuristic names.");
+                SearchStrings.Get(lang, "warn.aiPlannerNoValid"));
             batch1Queue = LimitBatch(
                 await BuildFallbackQueueAsync(request, [], keywords, lang, tlds, ct),
                 Batch1Size);
@@ -360,7 +362,7 @@ public sealed class DomainSearchService : IDomainSearchService
         }
         catch (Exception ex)
         {
-            state.Warning = AppendWarning(state.Warning, $"AI planner failed: {ex.Message}");
+            state.Warning = AppendWarning(state.Warning, SearchStrings.Get(lang, "warn.aiPlannerFailed", ex.Message));
             return [];
         }
     }
@@ -468,6 +470,7 @@ public sealed class DomainSearchService : IDomainSearchService
     private async Task<NameGenResult> GenerateNamesAsync(
         DomainSearchRequest request,
         DomainSearchRequest genRequest,
+        string lang,
         CancellationToken ct)
     {
         if (!request.UseLlm)
@@ -497,7 +500,7 @@ public sealed class DomainSearchService : IDomainSearchService
             }
             catch (Exception ex)
             {
-                warning = AppendWarning(warning, $"LLM name generation failed: {ex.Message}");
+                warning = AppendWarning(warning, SearchStrings.Get(lang, "warn.llmNameGenFailed", ex.Message));
                 generatorUsed = "heuristic";
             }
         }
@@ -540,20 +543,20 @@ public sealed class DomainSearchService : IDomainSearchService
                 if (brief is not null)
                 {
                     warning = AppendWarning(warning,
-                        "AI planner returned no valid domains; checking heuristic names.");
+                        SearchStrings.Get(lang, "warn.aiPlannerNoValid"));
                 }
                 else
                 {
                     warning = AppendWarning(warning,
-                        "AI planner returned no valid domains; using heuristic queue.");
+                        SearchStrings.Get(lang, "warn.aiPlannerNoValidQueue"));
                 }
             }
             catch (Exception ex)
             {
                 warning = AppendWarning(warning,
                     brief is not null
-                        ? $"AI planner failed: {ex.Message}; checking heuristic names."
-                        : $"AI planner failed, using heuristic queue: {ex.Message}");
+                        ? SearchStrings.Get(lang, "warn.aiPlannerFailedHeuristic", ex.Message)
+                        : SearchStrings.Get(lang, "warn.aiPlannerFailedQueue", ex.Message));
             }
         }
 
@@ -733,30 +736,44 @@ public sealed class DomainSearchService : IDomainSearchService
         return queue;
     }
 
-    private static string BuildShortAdvice(
-        IReadOnlyList<DomainCandidate> ranked,
+    private static string? BuildAvailabilityWarning(
+        string? warning,
+        List<DomainCandidate> available,
         int checksUsed,
-        int maxChecks,
-        int unavailableCount)
+        int credentialFailures,
+        int rateLimitFailures,
+        decimal maxPriceUsd,
+        bool useLlm,
+        string lang)
     {
-        if (ranked.Count == 0)
+        if (available.Count > 0)
         {
-            return $"No available domains after {checksUsed} of {maxChecks} checks " +
-                   $"({unavailableCount} taken or over budget). Try more TLDs or run another search.";
+            if (rateLimitFailures > checksUsed / 2)
+                return AppendWarning(warning, SearchStrings.Get(lang, "warn.rateLimitIncomplete"));
+            return warning;
         }
 
-        if (ranked.Count == 1)
+        if (checksUsed > 0 && credentialFailures == checksUsed)
         {
-            var top = ranked[0];
-            var price = top.PriceUsd is { } p ? $" at ${p:F2}" : "";
-            return $"Only one option found: {top.FullDomain}{price}. " +
-                   $"Checked {checksUsed}/{maxChecks} names — most were taken. " +
-                   "Try more TLDs or search again for more coinages.";
+            return AppendWarning(warning, SearchStrings.Get(lang, "warn.porkbunNotConfigured"));
         }
 
-        return $"Found {ranked.Count} options after {checksUsed}/{maxChecks} checks " +
-               $"({unavailableCount} taken or over budget). " +
-               "Add more TLDs if you want additional choices.";
+        if (rateLimitFailures > 0 && checksUsed == 0)
+        {
+            return AppendWarning(warning, SearchStrings.Get(lang, "warn.rateLimitRetry"));
+        }
+
+        if (rateLimitFailures > checksUsed / 2)
+        {
+            return AppendWarning(warning, SearchStrings.Get(lang, "warn.rateLimitIncomplete"));
+        }
+
+        var hint = useLlm
+            ? SearchStrings.Get(lang, "warn.hintUseLlm")
+            : SearchStrings.Get(lang, "warn.hintNoLlm");
+
+        return AppendWarning(warning,
+            SearchStrings.Get(lang, "warn.noAvailable", checksUsed, maxPriceUsd, hint));
     }
 
     private List<DomainCandidate> PlannedToCandidates(
@@ -885,7 +902,7 @@ public sealed class DomainSearchService : IDomainSearchService
         }
         catch (Exception ex)
         {
-            return new RefillOutcome($"AI refill failed: {ex.Message}");
+            return new RefillOutcome(SearchStrings.Get(lang, "warn.aiRefillFailed", ex.Message));
         }
     }
 
@@ -924,48 +941,6 @@ public sealed class DomainSearchService : IDomainSearchService
 
     private static string? AppendWarning(string? warning, string message) =>
         string.IsNullOrWhiteSpace(warning) ? message : $"{warning} {message}";
-
-    private static string? BuildAvailabilityWarning(
-        string? warning,
-        List<DomainCandidate> available,
-        int checksUsed,
-        int credentialFailures,
-        int rateLimitFailures,
-        decimal maxPriceUsd,
-        bool useLlm)
-    {
-        if (available.Count > 0)
-        {
-            if (rateLimitFailures > checksUsed / 2)
-                return AppendWarning(warning, "Many checks hit Porkbun rate limits. Results may be incomplete.");
-            return warning;
-        }
-
-        if (checksUsed > 0 && credentialFailures == checksUsed)
-        {
-            return AppendWarning(warning,
-                "Domain availability checks are unavailable (Porkbun API not configured on server).");
-        }
-
-        if (rateLimitFailures > 0 && checksUsed == 0)
-        {
-            return AppendWarning(warning,
-                "Many checks hit Porkbun rate limits. Please try again in a minute.");
-        }
-
-        if (rateLimitFailures > checksUsed / 2)
-        {
-            return AppendWarning(warning,
-                "Many checks hit Porkbun rate limits. Results may be incomplete.");
-        }
-
-        var hint = useLlm
-            ? "Try more invented brand names, add TLDs like .app or .dev, or raise the price limit."
-            : "Try shorter names, add a country TLD (e.g. .mx), raise the price limit, or enable AI.";
-
-        return AppendWarning(warning,
-            $"Checked {checksUsed} domains; none available under ${maxPriceUsd:F0}. {hint}");
-    }
 
     private static void Report(
         IProgress<SearchProgressEvent>? progress,

@@ -3,6 +3,7 @@ namespace SeoDomainFinder.Core.Models;
 public sealed record FoundEntry(string Domain, decimal? PriceUsd, int SeoScore);
 
 public sealed record SearchSummary(
+    string Language,
     string Prompt,
     IReadOnlyList<string> Keywords,
     IReadOnlyList<string> Tlds,
