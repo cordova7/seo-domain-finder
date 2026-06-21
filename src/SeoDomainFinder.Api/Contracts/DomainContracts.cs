@@ -9,7 +9,8 @@ public sealed record DomainSearchDto(
     string? OpenRouterApiKey,
     string? PorkbunApiKey,
     string? PorkbunSecretKey,
-    int? MaxCandidates);
+    int? MaxCandidates,
+    int? MaxChecks);
 
 public sealed record DomainCandidateDto(
     string Name,

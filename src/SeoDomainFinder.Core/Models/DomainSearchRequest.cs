@@ -10,5 +10,6 @@ public sealed class DomainSearchRequest
     public string? OpenRouterApiKey { get; init; }
     public string? PorkbunApiKey { get; init; }
     public string? PorkbunSecretKey { get; init; }
-    public int MaxCandidates { get; init; } = 20;
+    public int MaxCandidates { get; init; } = 15;
+    public int MaxChecks { get; init; } = 90;
 }

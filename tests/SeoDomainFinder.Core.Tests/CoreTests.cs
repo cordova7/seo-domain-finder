@@ -1,3 +1,6 @@
+using SeoDomainFinder.Core.Abstractions;
+using SeoDomainFinder.Core.Generators;
+using SeoDomainFinder.Core.Models;
 using SeoDomainFinder.Core.Scoring;
 using SeoDomainFinder.Core.Services;
 
@@ -29,7 +32,7 @@ public class KeywordExtractorTests
 public class NameSanitizerTests
 {
     [Theory]
-    [InlineData("alertasjudmx", true)]
+    [InlineData("alertasjud", true)]
     [InlineData("my-domain", false)]
     [InlineData("domain123", false)]
     [InlineData("ab", false)]
@@ -43,6 +46,34 @@ public class NameSanitizerTests
     {
         Assert.Equal("alertasjud", NameSanitizer.Normalize("Alertas-Jud!!!"));
     }
+
+    [Theory]
+    [InlineData("com", true)]
+    [InlineData("mx", true)]
+    [InlineData("invalidtld", false)]
+    public void IsAllowedTld_Works(string tld, bool expected)
+    {
+        Assert.Equal(expected, NameSanitizer.IsAllowedTld(tld));
+    }
+}
+
+public class TldCatalogTests
+{
+    [Fact]
+    public void Universal_IncludesCommonTlds()
+    {
+        Assert.Contains("com", TldCatalog.Universal);
+        Assert.Contains("io", TldCatalog.Universal);
+        Assert.DoesNotContain("mx", TldCatalog.Universal);
+    }
+
+    [Fact]
+    public void ForLanguage_ReturnsCountryTlds()
+    {
+        var mx = TldCatalog.ForLanguage("es");
+        Assert.Contains("mx", mx);
+        Assert.Contains("es", mx);
+    }
 }
 
 public class SeoScorerTests
@@ -51,7 +82,7 @@ public class SeoScorerTests
     public void Score_MatchesKeywords()
     {
         var scorer = new SeoScorer();
-        var result = scorer.Score("alertasjudmx", ["alertas", "judicial", "mexico"], "es");
+        var result = scorer.Score("alertasjud", ["alertas", "judicial", "mexico"], "es");
 
         Assert.True(result.Score > 0);
         Assert.Contains("alertas", result.Explanation, StringComparison.OrdinalIgnoreCase);
@@ -63,8 +94,8 @@ public class HeuristicNameGeneratorTests
     [Fact]
     public async Task Generate_ReturnsCandidates()
     {
-        var gen = new Core.Generators.HeuristicNameGenerator();
-        var names = await gen.GenerateAsync(new Core.Models.DomainSearchRequest
+        var gen = new HeuristicNameGenerator();
+        var names = await gen.GenerateAsync(new DomainSearchRequest
         {
             Prompt = "judicial alert monitoring for lawyers",
             Language = "en",
@@ -73,5 +104,84 @@ public class HeuristicNameGeneratorTests
 
         Assert.NotEmpty(names);
         Assert.All(names, n => Assert.True(NameSanitizer.IsValidDomainName(n)));
+    }
+
+    [Fact]
+    public async Task Generate_DoesNotAppendMxSuffix()
+    {
+        var gen = new HeuristicNameGenerator();
+        var names = await gen.GenerateAsync(new DomainSearchRequest
+        {
+            Prompt = "pet shop for dogs",
+            Language = "en",
+            MaxCandidates = 20
+        });
+
+        Assert.DoesNotContain(names, n => n.EndsWith("mx", StringComparison.OrdinalIgnoreCase));
+    }
+}
+
+public class DomainSearchServiceTests
+{
+    [Fact]
+    public async Task Search_ReturnsOnlyAvailableDomains()
+    {
+        var checker = new FakeChecker(availableAfter: 3);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "pet shop for dogs",
+            Language = "en",
+            Tlds = ["com"],
+            MaxCandidates = 5,
+            MaxChecks = 20
+        });
+
+        Assert.NotEmpty(result.Candidates);
+        Assert.All(result.Candidates, c => Assert.True(c.Available));
+        Assert.All(result.Candidates, c => Assert.NotNull(c.PriceUsd));
+    }
+
+    [Fact]
+    public async Task Search_EmptyWhenNoneAvailable()
+    {
+        var checker = new FakeChecker(availableAfter: int.MaxValue);
+        var service = new DomainSearchService(
+            [new HeuristicNameGenerator()],
+            new SeoScorer(),
+            checker);
+
+        var result = await service.SearchAsync(new DomainSearchRequest
+        {
+            Prompt = "pet shop for dogs",
+            Language = "en",
+            Tlds = ["com"],
+            MaxCandidates = 5,
+            MaxChecks = 10
+        });
+
+        Assert.Empty(result.Candidates);
+        Assert.Contains("none available", result.Warning!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class FakeChecker(int availableAfter) : IDomainAvailabilityChecker
+    {
+        private int _calls;
+
+        public Task<DomainCheckResult> CheckAsync(string fullDomain, CancellationToken ct = default)
+        {
+            _calls++;
+            var available = _calls >= availableAfter;
+            return Task.FromResult(new DomainCheckResult(
+                fullDomain,
+                available,
+                available ? 12.99m : null,
+                available ? "standard" : null,
+                available ? null : "taken"));
+        }
     }
 }

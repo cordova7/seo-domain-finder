@@ -1,36 +1,40 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { getMessages, type Locale, locales } from "@/lib/i18n";
-import type en from "../../messages/en.json";
+import { getMessages } from "@/lib/i18n";
+import en from "../../messages/en.json";
 
 type Messages = typeof en;
 
 type I18nContextValue = {
-  locale: Locale;
-  setLocale: (l: Locale) => void;
+  locale: string;
+  setLocale: (l: string) => void;
   t: Messages;
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
-  const [messages, setMessages] = useState<Messages | null>(null);
+  const [locale, setLocaleState] = useState("en");
+  const [messages, setMessages] = useState<Messages>(en);
 
   useEffect(() => {
-    const saved = localStorage.getItem("sdf-locale") as Locale | null;
-    if (saved && locales.includes(saved)) setLocaleState(saved);
+    const saved = localStorage.getItem("sdf-locale");
+    if (saved) setLocaleState(saved);
   }, []);
 
   useEffect(() => {
-    getMessages(locale).then(setMessages);
+    let cancelled = false;
+    getMessages(locale).then((m) => {
+      if (!cancelled) setMessages(m);
+    });
     localStorage.setItem("sdf-locale", locale);
+    return () => {
+      cancelled = true;
+    };
   }, [locale]);
 
-  const setLocale = (l: Locale) => setLocaleState(l);
-
-  if (!messages) return null;
+  const setLocale = (l: string) => setLocaleState(l);
 
   return (
     <I18nContext.Provider value={{ locale, setLocale, t: messages }}>

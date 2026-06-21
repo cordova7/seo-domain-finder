@@ -6,22 +6,25 @@ namespace SeoDomainFinder.Core.Generators;
 
 public sealed class HeuristicNameGenerator : INameGenerator
 {
+    private static readonly string[] DefaultModifiers =
+        ["app", "hub", "pro", "now", "auto", "online", "cloud", "digital", "smart", "get"];
+
     private static readonly Dictionary<string, string[]> ModifiersByLang = new()
     {
-        ["en"] = ["app", "hub", "pro", "now", "auto", "alert", "track", "monitor", "online", "cloud"],
-        ["es"] = ["app", "hub", "pro", "alerta", "alertas", "monitor", "auto", "online", "mx", "digital"],
+        ["es"] = ["app", "hub", "pro", "alerta", "alertas", "monitor", "auto", "online", "digital"],
         ["pt"] = ["app", "hub", "pro", "alerta", "alertas", "monitor", "auto", "online", "digital"],
         ["fr"] = ["app", "hub", "pro", "alerte", "alertes", "auto", "online", "digital"],
-        ["de"] = ["app", "hub", "pro", "alert", "auto", "online", "digital", "monitor"]
+        ["de"] = ["app", "hub", "pro", "alert", "auto", "online", "digital", "monitor"],
+        ["it"] = ["app", "hub", "pro", "auto", "online", "digitale"],
     };
 
     private static readonly Dictionary<string, string[]> ActionPrefixes = new()
     {
         ["en"] = ["get", "my", "go", "try", "use", "smart", "quick", "easy"],
-        ["es"] = ["mi", "tu", "go", "alerta", "monitor", "rapido", "facil"],
+        ["es"] = ["mi", "go", "alerta", "monitor", "rapido", "facil"],
         ["pt"] = ["meu", "go", "alerta", "monitor", "rapido", "facil"],
         ["fr"] = ["mon", "go", "alerte", "rapide", "facile"],
-        ["de"] = ["mein", "go", "alert", "schnell", "einfach"]
+        ["de"] = ["mein", "go", "alert", "schnell", "einfach"],
     };
 
     public string Name => "heuristic";
@@ -30,14 +33,14 @@ public sealed class HeuristicNameGenerator : INameGenerator
     {
         var lang = KeywordExtractor.DetectLanguage(request.Prompt, request.Language);
         var keywords = KeywordExtractor.Extract(request.Prompt, lang);
-        var modifiers = ModifiersByLang.GetValueOrDefault(lang, ModifiersByLang["en"]);
+        var modifiers = ModifiersByLang.GetValueOrDefault(lang, DefaultModifiers);
         var prefixes = ActionPrefixes.GetValueOrDefault(lang, ActionPrefixes["en"]);
         var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var kw in keywords)
         {
             results.Add(NameSanitizer.Normalize(kw));
-            foreach (var mod in modifiers.Take(6))
+            foreach (var mod in modifiers.Take(8))
                 results.Add(NameSanitizer.Normalize(kw + mod));
             foreach (var prefix in prefixes.Take(4))
                 results.Add(NameSanitizer.Normalize(prefix + kw));
@@ -51,14 +54,18 @@ public sealed class HeuristicNameGenerator : INameGenerator
         }
 
         if (keywords.Count >= 2)
-        {
-            results.Add(NameSanitizer.Normalize(keywords[0] + "mx"));
             results.Add(NameSanitizer.Normalize(string.Join("", keywords.Take(2))));
+
+        foreach (var kw in keywords.Take(4))
+        {
+            results.Add(NameSanitizer.Normalize(kw + "ly"));
+            results.Add(NameSanitizer.Normalize(kw + "ify"));
+            results.Add(NameSanitizer.Normalize("my" + kw));
         }
 
         var filtered = results
             .Where(NameSanitizer.IsValidDomainName)
-            .Take(request.MaxCandidates * 3)
+            .Take(request.MaxCandidates * 4)
             .ToList();
 
         return Task.FromResult<IReadOnlyList<string>>(filtered);

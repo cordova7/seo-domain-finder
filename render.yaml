@@ -19,6 +19,6 @@ services:
       - key: DemoRateLimit__LlmPerHour
         value: "5"
       - key: DemoRateLimit__ChecksPerSession
-        value: "30"
+        value: "90"
       - key: Cors__AllowedOrigins
         sync: false

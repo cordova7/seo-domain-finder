@@ -4,11 +4,6 @@ namespace SeoDomainFinder.Core.Services;
 
 public static partial class NameSanitizer
 {
-    private static readonly HashSet<string> AllowedTlds = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "com", "net", "org", "io", "app", "ai", "mx", "dev", "co"
-    };
-
     public static bool IsValidDomainName(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -29,7 +24,7 @@ public static partial class NameSanitizer
         return cleaned;
     }
 
-    public static bool IsAllowedTld(string tld) => AllowedTlds.Contains(tld.Trim().TrimStart('.'));
+    public static bool IsAllowedTld(string tld) => TldCatalog.IsAllowed(tld);
 
     [GeneratedRegex(@"^[a-z][a-z0-9]*$")]
     private static partial Regex DomainNameRegex();

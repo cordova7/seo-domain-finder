@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { CountryTldPicker } from "@/components/CountryTldPicker";
 import { searchDomains, type DomainCandidate } from "@/lib/api";
 
-const ALL_TLDS = ["com", "mx", "io", "net"] as const;
+const DEFAULT_UNIVERSAL = ["com", "io", "net", "app"];
 
 export default function HomePage() {
   const { t, locale } = useI18n();
   const [prompt, setPrompt] = useState("");
-  const [tlds, setTlds] = useState<string[]>(["com", "mx"]);
+  const [universalTlds, setUniversalTlds] = useState<string[]>(DEFAULT_UNIVERSAL);
+  const [countryTlds, setCountryTlds] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState(15);
   const [useAi, setUseAi] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -26,11 +28,7 @@ export default function HomePage() {
     warning: string | null;
   } | null>(null);
 
-  const toggleTld = (tld: string) => {
-    setTlds((prev) =>
-      prev.includes(tld) ? prev.filter((t) => t !== tld) : [...prev, tld]
-    );
-  };
+  const allTlds = [...new Set([...universalTlds, ...countryTlds])];
 
   const handleSearch = async () => {
     if (!prompt.trim()) return;
@@ -40,7 +38,7 @@ export default function HomePage() {
       const res = await searchDomains({
         prompt: prompt.trim(),
         language: locale,
-        tlds: tlds.length ? tlds : ["com"],
+        tlds: allTlds.length ? allTlds : ["com"],
         maxPriceUsd: maxPrice,
         useLlm: useAi,
         openRouterApiKey: openRouterKey || undefined,
@@ -86,18 +84,13 @@ export default function HomePage() {
 
           <div className="mt-4">
             <span className="text-sm font-medium">{t.tldsLabel}</span>
-            <div className="mt-2 flex flex-wrap gap-3">
-              {ALL_TLDS.map((tld) => (
-                <label key={tld} className="flex cursor-pointer items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={tlds.includes(tld)}
-                    onChange={() => toggleTld(tld)}
-                    className="rounded border-slate-300"
-                  />
-                  .{tld}
-                </label>
-              ))}
+            <div className="mt-2">
+              <CountryTldPicker
+                universal={universalTlds}
+                countryTlds={countryTlds}
+                onUniversalChange={setUniversalTlds}
+                onCountryChange={setCountryTlds}
+              />
             </div>
           </div>
 
@@ -205,7 +198,6 @@ export default function HomePage() {
                     <th className="px-4 py-3">{t.domain}</th>
                     <th className="px-4 py-3">{t.seo}</th>
                     <th className="px-4 py-3">{t.price}</th>
-                    <th className="px-4 py-3">{t.available}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -223,13 +215,6 @@ export default function HomePage() {
                       </td>
                       <td className="px-4 py-3">
                         {r.priceUsd != null ? `$${r.priceUsd.toFixed(2)}` : "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {r.available ? (
-                          <span className="text-green-600 dark:text-green-400">{t.yes}</span>
-                        ) : (
-                          <span className="text-slate-400">{t.no}</span>
-                        )}
                       </td>
                     </tr>
                   ))}

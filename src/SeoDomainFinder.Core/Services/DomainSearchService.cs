@@ -35,8 +35,22 @@ public sealed class DomainSearchService : IDomainSearchService
 
         string generatorUsed = "heuristic";
         string? warning = null;
-        IReadOnlyList<string> rawNames;
 
+        var genRequest = new DomainSearchRequest
+        {
+            Prompt = request.Prompt,
+            Language = request.Language,
+            Tlds = tlds,
+            MaxPriceUsd = request.MaxPriceUsd,
+            UseLlm = request.UseLlm,
+            OpenRouterApiKey = request.OpenRouterApiKey,
+            PorkbunApiKey = request.PorkbunApiKey,
+            PorkbunSecretKey = request.PorkbunSecretKey,
+            MaxCandidates = request.MaxCandidates * 4,
+            MaxChecks = request.MaxChecks
+        };
+
+        IReadOnlyList<string> rawNames;
         if (request.UseLlm)
         {
             var llm = _generators.FirstOrDefault(g => g.Name == "openrouter")
@@ -45,32 +59,95 @@ public sealed class DomainSearchService : IDomainSearchService
             {
                 try
                 {
-                    rawNames = await llm.GenerateAsync(request, ct);
+                    rawNames = await llm.GenerateAsync(genRequest, ct);
                     generatorUsed = llm.Name;
                 }
                 catch (Exception ex)
                 {
                     warning = $"LLM failed, using heuristics: {ex.Message}";
-                    rawNames = await _generators.First(g => g.Name == "heuristic").GenerateAsync(request, ct);
+                    rawNames = await GetHeuristic().GenerateAsync(genRequest, ct);
                 }
             }
             else
             {
-                rawNames = await _generators.First(g => g.Name == "heuristic").GenerateAsync(request, ct);
+                rawNames = await GetHeuristic().GenerateAsync(genRequest, ct);
             }
         }
         else
         {
-            rawNames = await _generators.First(g => g.Name == "heuristic").GenerateAsync(request, ct);
+            rawNames = await GetHeuristic().GenerateAsync(genRequest, ct);
         }
 
-        var scored = new List<DomainCandidate>();
-        foreach (var name in rawNames.Where(NameSanitizer.IsValidDomainName).Distinct(StringComparer.OrdinalIgnoreCase))
+        var queue = BuildCandidateQueue(rawNames, keywords, lang, tlds);
+        var available = new List<DomainCandidate>();
+        var checksUsed = 0;
+        var maxChecks = Math.Max(10, request.MaxChecks);
+        var target = request.MaxCandidates;
+
+        foreach (var candidate in queue)
+        {
+            if (available.Count >= target || checksUsed >= maxChecks)
+                break;
+
+            ct.ThrowIfCancellationRequested();
+            checksUsed++;
+
+            var check = await _availabilityChecker.CheckAsync(candidate.FullDomain, ct);
+            var priceOk = check.PriceUsd is null || check.PriceUsd <= request.MaxPriceUsd;
+            var typeOk = check.PriceType is null or "standard" or "registration";
+
+            if (!check.Available || !priceOk || !typeOk)
+                continue;
+
+            candidate.Available = true;
+            candidate.PriceUsd = check.PriceUsd;
+            candidate.PriceType = check.PriceType;
+            candidate.TotalScore = candidate.SeoScore + 10;
+            available.Add(candidate);
+        }
+
+        if (available.Count == 0)
+        {
+            warning = (warning ?? "") +
+                      $" Checked {checksUsed} domains; none available under ${request.MaxPriceUsd:F0}. Try a more specific description, fewer TLDs, or enable AI.";
+        }
+
+        var ranked = available
+            .OrderByDescending(c => c.TotalScore)
+            .ThenBy(c => c.PriceUsd)
+            .Take(target)
+            .ToList();
+
+        return new DomainSearchResult
+        {
+            Candidates = ranked,
+            GeneratorUsed = generatorUsed,
+            ExtractedKeywords = keywords,
+            Warning = string.IsNullOrWhiteSpace(warning) ? null : warning.Trim()
+        };
+    }
+
+    private INameGenerator GetHeuristic() =>
+        _generators.First(g => g.Name == "heuristic");
+
+    private List<DomainCandidate> BuildCandidateQueue(
+        IReadOnlyList<string> rawNames,
+        IReadOnlyList<string> keywords,
+        string lang,
+        IReadOnlyList<string> tlds)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<DomainCandidate>();
+
+        foreach (var name in rawNames.Where(NameSanitizer.IsValidDomainName))
         {
             var seo = _seoScorer.Score(name, keywords, lang);
             foreach (var tld in tlds)
             {
-                scored.Add(new DomainCandidate
+                var key = $"{name}.{tld}";
+                if (!seen.Add(key))
+                    continue;
+                list.Add(new DomainCandidate
                 {
                     Name = name,
                     Tld = tld,
@@ -80,66 +157,9 @@ public sealed class DomainSearchService : IDomainSearchService
             }
         }
 
-        scored = scored
+        return list
             .OrderByDescending(c => c.SeoScore)
             .ThenBy(c => c.Name.Length)
-            .Take(request.MaxCandidates * tlds.Count)
             .ToList();
-
-        var checkedDomains = new List<DomainCandidate>();
-        foreach (var candidate in scored)
-        {
-            ct.ThrowIfCancellationRequested();
-            var check = await _availabilityChecker.CheckAsync(candidate.FullDomain, ct);
-            candidate.Available = check.Available;
-            candidate.PriceUsd = check.PriceUsd;
-            candidate.PriceType = check.PriceType;
-            candidate.UnavailableReason = check.Reason;
-
-            var priceOk = check.PriceUsd is null || check.PriceUsd <= request.MaxPriceUsd;
-            var typeOk = check.PriceType is null or "standard" or "registration";
-
-            if (check.Available && priceOk && typeOk)
-            {
-                candidate.TotalScore = candidate.SeoScore + (priceOk ? 10 : 0);
-                checkedDomains.Add(candidate);
-            }
-            else if (!check.Available || !priceOk || !typeOk)
-            {
-                candidate.TotalScore = candidate.SeoScore;
-                if (!check.Available && check.PriceType == "premium")
-                    candidate.UnavailableReason = "premium domain";
-                else if (!priceOk)
-                    candidate.UnavailableReason = $"price ${check.PriceUsd:F2} exceeds max ${request.MaxPriceUsd:F2}";
-            }
-        }
-
-        var ranked = checkedDomains
-            .Where(c => c.Available == true)
-            .OrderByDescending(c => c.TotalScore)
-            .ThenBy(c => c.PriceUsd)
-            .Take(request.MaxCandidates)
-            .ToList();
-
-        if (ranked.Count == 0)
-        {
-            ranked = scored
-                .Take(request.MaxCandidates)
-                .Select(c =>
-                {
-                    c.TotalScore = c.SeoScore;
-                    return c;
-                })
-                .ToList();
-            warning = (warning ?? "") + " No available domains within price limit; showing SEO-ranked candidates without availability.";
-        }
-
-        return new DomainSearchResult
-        {
-            Candidates = ranked,
-            GeneratorUsed = generatorUsed,
-            ExtractedKeywords = keywords,
-            Warning = string.IsNullOrWhiteSpace(warning) ? null : warning.Trim()
-        };
     }
 }

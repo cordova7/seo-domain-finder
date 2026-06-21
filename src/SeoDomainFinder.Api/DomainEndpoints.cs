@@ -1,14 +1,17 @@
 using SeoDomainFinder.Api.Contracts;
 using SeoDomainFinder.Core.Abstractions;
 using SeoDomainFinder.Core.Models;
+using SeoDomainFinder.Core.Services;
+using SeoDomainFinder.Infrastructure.Options;
 using SeoDomainFinder.Infrastructure.Porkbun;
 using SeoDomainFinder.Infrastructure.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace SeoDomainFinder.Api;
 
 public static class DomainEndpoints
 {
-    private static readonly HashSet<string> DefaultTlds = ["com", "mx", "io", "net"];
+    private static readonly string[] DefaultTlds = ["com", "io", "net", "app"];
 
     public static void MapDomainEndpoints(this WebApplication app)
     {
@@ -19,6 +22,7 @@ public static class DomainEndpoints
             IDomainSearchService searchService,
             PorkbunDomainChecker porkbun,
             DemoRateLimiter rateLimiter,
+            IOptionsMonitor<DemoRateLimitOptions> rateOptions,
             HttpContext httpContext,
             ILogger<Program> logger) =>
         {
@@ -42,15 +46,18 @@ public static class DomainEndpoints
 
             var tlds = (dto.Tlds ?? DefaultTlds.ToList())
                 .Select(t => t.Trim().TrimStart('.').ToLowerInvariant())
-                .Where(t => t.Length > 0)
+                .Where(NameSanitizer.IsAllowedTld)
                 .Distinct()
                 .ToList();
             if (tlds.Count == 0) tlds = DefaultTlds.ToList();
 
             var maxCandidates = Math.Clamp(dto.MaxCandidates ?? 15, 5, 25);
-            var estimatedChecks = maxCandidates * tlds.Count;
+            var maxChecks = Math.Clamp(
+                dto.MaxChecks ?? rateOptions.CurrentValue.ChecksPerSession,
+                10,
+                rateOptions.CurrentValue.ChecksPerSession);
 
-            if (!useCustomPorkbun && !rateLimiter.TryConsumeChecks(sessionId, estimatedChecks, out var checksRemaining))
+            if (!useCustomPorkbun && !rateLimiter.TryConsumeChecks(sessionId, maxChecks, out var checksRemaining))
                 return Results.Json(new { error = "Domain check limit exceeded for this session.", remaining = checksRemaining }, statusCode: 429);
 
             if (useCustomPorkbun)
@@ -68,16 +75,22 @@ public static class DomainEndpoints
                 OpenRouterApiKey = dto.OpenRouterApiKey,
                 PorkbunApiKey = dto.PorkbunApiKey,
                 PorkbunSecretKey = dto.PorkbunSecretKey,
-                MaxCandidates = maxCandidates
+                MaxCandidates = maxCandidates,
+                MaxChecks = maxChecks
             };
 
             try
             {
                 var result = await searchService.SearchAsync(request, httpContext.RequestAborted);
-                var response = new DomainSearchResponseDto(
-                    result.Candidates.Select(c => new DomainCandidateDto(
+                var availableOnly = result.Candidates
+                    .Where(c => c.Available == true)
+                    .Select(c => new DomainCandidateDto(
                         c.Name, c.Tld, c.FullDomain, c.SeoScore, c.SeoExplanation,
-                        c.Available, c.PriceUsd, c.PriceType, c.TotalScore, c.UnavailableReason)).ToList(),
+                        c.Available, c.PriceUsd, c.PriceType, c.TotalScore, c.UnavailableReason))
+                    .ToList();
+
+                var response = new DomainSearchResponseDto(
+                    availableOnly,
                     result.GeneratorUsed,
                     result.ExtractedKeywords,
                     result.Warning);

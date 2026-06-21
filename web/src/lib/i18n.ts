@@ -1,19 +1,17 @@
-export type Locale = "en" | "es" | "pt" | "fr" | "de";
+import type en from "../../messages/en.json";
 
-export const locales: Locale[] = ["en", "es", "pt", "fr", "de"];
+export type UiLocale = "en" | "es" | "pt" | "fr" | "de";
 
-export const localeNames: Record<Locale, string> = {
-  en: "English",
-  es: "Español",
-  pt: "Português",
-  fr: "Français",
-  de: "Deutsch",
-};
+const uiLocales: UiLocale[] = ["en", "es", "pt", "fr", "de"];
 
-export type Messages = typeof import("../../messages/en.json");
+export type Messages = typeof en;
 
-export async function getMessages(locale: Locale) {
-  switch (locale) {
+export async function getMessages(locale: string): Promise<Messages> {
+  const code = locale.slice(0, 2).toLowerCase();
+  if (!uiLocales.includes(code as UiLocale)) {
+    return (await import("../../messages/en.json")).default;
+  }
+  switch (code as UiLocale) {
     case "es":
       return (await import("../../messages/es.json")).default;
     case "pt":
